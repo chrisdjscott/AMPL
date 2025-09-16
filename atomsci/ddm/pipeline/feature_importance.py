@@ -9,7 +9,7 @@ from atomsci.ddm.pipeline import model_pipeline as mp
 from atomsci.ddm.pipeline import parameter_parser as parse
 from atomsci.ddm.pipeline.perf_data import negative_predictive_value
 
-from deepchem.data.datasets import NumpyDataset
+from deepchem.data.datasets import DiskDataset
 
 from sklearn import metrics
 from scipy import stats
@@ -39,7 +39,7 @@ class _SklearnRegressorWrapper(BaseEstimator):
         return self.model.fit(dataset)
 
     def predict(self, X):
-        dataset = NumpyDataset(X)
+        dataset = DiskDataset.from_numpy(X)
         y_pred = self.model.predict(dataset)
         return y_pred.reshape((-1, 1))
 
@@ -54,17 +54,17 @@ class _SklearnClassifierWrapper(BaseEstimator):
         self.classes_ = np.array([0,1], dtype='int')
 
     def fit(self, X, y):
-        dataset = NumpyDataset(X, y=y)
+        dataset = DiskDataset.from_numpy(X, y=y)
         return self.model.fit(dataset)
 
     def predict(self, X):
         # change to return class labels
-        dataset = NumpyDataset(X)
+        dataset = DiskDataset.from_numpy(X)
         probs = self.model.predict(dataset).reshape((-1,2))
         return np.argmax(probs, axis=1)
 
     def predict_proba(self, X):
-        dataset = NumpyDataset(X)
+        dataset = DiskDataset.from_numpy(X)
         probs = self.model.predict(dataset)
         return probs.reshape((-1,2))
 

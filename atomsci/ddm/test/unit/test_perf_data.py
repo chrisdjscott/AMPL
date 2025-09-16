@@ -100,7 +100,7 @@ def test_KFoldRegressionPerfData():
     assert all(weights==1)
 
     real_vals = perf.get_real_values(ids)
-    d = dc.data.NumpyDataset(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
+    d = dc.data.DiskDataset.from_numpy(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
 
     pred_vals = d.y
     # This should have r2 of 1
@@ -151,7 +151,7 @@ def test_KFoldRegressionPerfDataMulti():
     assert np.allclose(weights, np.ones_like(weights))
 
     real_vals = perf.get_real_values(ids)
-    d = dc.data.NumpyDataset(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones_like(weights))
+    d = dc.data.DiskDataset.from_numpy(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones_like(weights))
 
     pred_vals = d.y
     # This should have r2 of 1
@@ -199,7 +199,7 @@ def test_KFoldClassificationPerfData():
     assert all(weights==1)
 
     real_vals = perf.get_real_values(ids)
-    d = dc.data.NumpyDataset(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
+    d = dc.data.DiskDataset.from_numpy(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
 
     num_classes = 2
     # input to to_one_hot needs to have the shape (N,) not (N,1)
@@ -252,7 +252,7 @@ def test_SimpleRegressionPerfData():
     assert weights.shape == (len(ids),1)
     assert all(weights==1)
 
-    d = dc.data.NumpyDataset(X=np.ones_like(real_vals), y=real_vals, 
+    d = dc.data.DiskDataset.from_numpy(X=np.ones_like(real_vals), y=real_vals, 
                              ids=ids, w=np.ones(len(ids)))
 
     pred_vals = d.y
@@ -300,7 +300,7 @@ def test_SimpleClassificationPerfData():
     assert weights.shape == (len(ids),1)
     assert all(weights==1)
 
-    d = dc.data.NumpyDataset(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
+    d = dc.data.DiskDataset.from_numpy(X=np.ones_like(real_vals), y=real_vals, ids=ids, w=np.ones(len(ids)))
 
     num_classes = 2
     # input to to_one_hot needs to have the shape (N,) not (N,1)

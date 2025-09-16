@@ -991,7 +991,7 @@ class ModelPipeline:
     
                     if self.featurization.feat_type == "graphconv":
                         self.log.debug("Computing training data embeddings for AD calculation.")
-                        train_dset = dc.data.NumpyDataset(train_X)
+                        train_dset = dc.data.DiskDataset.from_numpy(train_X)
                         self.featurized_train_data = self.model_wrapper.generate_embeddings(train_dset)
                     else:
                         if self.featurization.feat_type=="computed_descriptors" and self.featurization.descriptor_type=='mordred_filtered':

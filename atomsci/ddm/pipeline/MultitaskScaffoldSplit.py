@@ -1066,7 +1066,7 @@ def split_using_MultitaskScaffoldSplit(df: pd.DataFrame,
     ids = df[smiles_col].values
 
     # build deepchem Dataset
-    dataset = dc.data.NumpyDataset(X, y, w=w, ids=ids)
+    dataset = dc.data.DiskDataset.from_numpy(X, y, w=w, ids=ids)
     mss = MultitaskScaffoldSplitter()
     splits = mss.split(dataset, **kwargs)
 
@@ -1089,7 +1089,7 @@ def split_with(df, splitter, smiles_col, id_col, response_cols, **kwargs):
     y, w = make_y_w(df, response_cols)
     ids = df[smiles_col].values
 
-    dataset = dc.data.NumpyDataset(X, y, w=w, ids=ids)
+    dataset = dc.data.DiskDataset.from_numpy(X, y, w=w, ids=ids)
 
     splits = splitter.split(dataset, **kwargs)
 

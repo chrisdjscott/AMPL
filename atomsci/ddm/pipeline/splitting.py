@@ -7,7 +7,7 @@ import copy
 import deepchem as dc
 import numpy as np
 import pandas as pd
-from deepchem.data import NumpyDataset
+from deepchem.data import DiskDataset
 from atomsci.ddm.pipeline.ave_splitter import AVEMinSplitter
 from atomsci.ddm.pipeline.temporal_splitter import TemporalSplitter
 from atomsci.ddm.pipeline.MultitaskScaffoldSplit import MultitaskScaffoldSplitter
@@ -638,7 +638,7 @@ class ProductionSplitting(Splitting):
 
         return [(train, valid)], test, [(train_attr, valid_attr)], test_attr
 
-def _copy_modify_NumpyDataset(dataset, **kwargs):
+def _copy_modify_DiskDataset(dataset, **kwargs):
     """Create a copy of the DeepChem Dataset object `dataset` and then modify it based on the given keyword arguments.
     This is useful for updating attributes like dataset.w or dataset.id
     """
@@ -649,7 +649,7 @@ def _copy_modify_NumpyDataset(dataset, **kwargs):
         'n_tasks':dataset.y.shape[1]
         }
     args.update(kwargs)
-    return NumpyDataset(**args)
+    return DiskDataset.from_numpy(**args)
 
 class DatasetManager:
     """Different splitters have different dataset requirements.
@@ -682,7 +682,7 @@ class DatasetManager:
         # sometimes the ids in dataset_ori is already a SMILES string.
         # since we assume that dataset_ori.ids are compound ids, we replace them with attr_df.index
         if self.needs_smiles:
-            self.dataset_ori = _copy_modify_NumpyDataset(self.dataset_ori, ids=self.attr_df.index)
+            self.dataset_ori = _copy_modify_DiskDataset(self.dataset_ori, ids=self.attr_df.index)
 
         # self.id_df will be used to map compound_ids or smiles to a set of indices to be used
         # with self.dataset_ori to map back to an expanded dataset after splitting
@@ -734,12 +734,12 @@ class DatasetManager:
             sub_dataset = sub_dataset.select(sel_df.indices.values)
 
             # update weight values
-            sub_dataset = _copy_modify_NumpyDataset(sub_dataset, w=sel_df[self.w_cols].values)
+            sub_dataset = _copy_modify_DiskDataset(sub_dataset, w=sel_df[self.w_cols].values)
 
         if self.needs_smiles:
             # Some DeepChem splitters require compound IDs in dataset to be SMILES strings. Swap in the
             # SMILES strings now; we'll reverse this later.
-            sub_dataset = _copy_modify_NumpyDataset(sub_dataset, ids=sel_df.smiles.values)
+            sub_dataset = _copy_modify_DiskDataset(sub_dataset, ids=sel_df.smiles.values)
 
         return sub_dataset
 

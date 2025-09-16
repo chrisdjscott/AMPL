@@ -11,10 +11,10 @@ def apply_sampling_method(train, params, random_state=None, seed=None):
     Apply a sampling method to a classification dataset when split_strategy=='train_valid_test'
     
     Inputs: 
-        - train: DeepChem NumpyDataset with train.X, train.y, train.w, and train.ids
+        - train: DeepChem DiskDataset.from_numpy with train.X, train.y, train.w, and train.ids
         - params (NameSpace object): contains all the parameter information.
     Returns:
-        - train_resampled: a DeepChem NumpyDataset with train.X, train.y, train.w, and train.ids
+        - train_resampled: a DeepChem DiskDataset.from_numpy with train.X, train.y, train.w, and train.ids
     """
     sampling_ratio = params.sampling_ratio
           
@@ -49,7 +49,7 @@ def apply_sampling_method(train, params, random_state=None, seed=None):
 
     else:
         raise ValueError(f"Unknown sampling method: {params.sampling_method}. Supported methods are 'SMOTE' and 'undersampling'.")
-    # return a new dc.data.NumpyDataset with the resampled data, the original weights and ids
-    train_resampled= dc.data.NumpyDataset(X_resampled, y_resampled, resampled_weights, new_ids)
+    # return a new dc.data.DiskDataset.from_numpy with the resampled data, the original weights and ids
+    train_resampled= dc.data.DiskDataset.from_numpy(X_resampled, y_resampled, resampled_weights, new_ids)
 
     return train_resampled

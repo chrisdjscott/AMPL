@@ -1,6 +1,6 @@
 import atomsci.ddm.pipeline.transformations as trans
 import numpy as np
-from deepchem.data import NumpyDataset
+from deepchem.data import DiskDataset
 
 
 def test_no_missing_values():
@@ -20,7 +20,7 @@ def test_no_missing_values():
     w = np.array([[1, 1], [1, 1], [1, 1]])
     x = np.ones_like(y)
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=x, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=x, y=y, w=w, ids=ids)
     y_means, y_stds = trans.get_statistics_missing_ydata(dataset)
     np.testing.assert_array_almost_equal(y_means, [3.0, 4.0])
     np.testing.assert_array_almost_equal(y_stds, [1.632993, 1.632993])
@@ -44,7 +44,7 @@ def test_some_missing_values():
     w = np.array([[1, 0], [1, 1], [1, 1]])
     x = np.ones_like(y)
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=x, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=x, y=y, w=w, ids=ids)
     y_means, y_stds = trans.get_statistics_missing_ydata(dataset)
     np.testing.assert_array_almost_equal(y_means, [3.0, 5.0])
     np.testing.assert_array_almost_equal(y_stds, [1.632993, 1.0])
@@ -64,7 +64,7 @@ def test_all_missing_values():
     w = np.array([[0, 0], [0, 0], [0, 0]])
     x = np.ones_like(y)
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=x, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=x, y=y, w=w, ids=ids)
     y_means, y_stds = trans.get_statistics_missing_ydata(dataset)
     np.testing.assert_array_almost_equal(y_means, [0.0, 0.0])
     np.testing.assert_array_almost_equal(y_stds, [0.0, 0.0])
@@ -86,7 +86,7 @@ def test_one_task_no_missing_values():
     w = np.array([[1], [1], [1]])
     x = np.ones_like(y)
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=x, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=x, y=y, w=w, ids=ids)
     y_means, y_stds = trans.get_statistics_missing_ydata(dataset)
     np.testing.assert_array_almost_equal(y_means, [3.0])
     np.testing.assert_array_almost_equal(y_stds, [1.632993])
@@ -107,7 +107,7 @@ def test_normalization_transformer_missing_data():
     y = np.array([[1.0, np.nan], [3.0, 4.0], [5.0, 6.0]])
     w = np.array([[1, 0], [1, 1], [1, 1]])
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=X, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=X, y=y, w=w, ids=ids)
 
     # Initialize the transformer
     transformer = trans.NormalizationTransformerMissingData(transform_X=False, transform_y=True, dataset=dataset)
@@ -144,7 +144,7 @@ def test_normalization_transformer_missing_data_transform_X():
     y = np.array([[1.0], [3.0], [5.0]])
     w = np.array([[1], [1], [1]])
     ids = np.array(range(len(y)))
-    dataset = NumpyDataset(X=X, y=y, w=w, ids=ids)
+    dataset = DiskDataset.from_numpy(X=X, y=y, w=w, ids=ids)
 
     # Initialize the transformer with transform_X=True
     transformer = trans.NormalizationTransformerMissingData(transform_X=True, dataset=dataset)

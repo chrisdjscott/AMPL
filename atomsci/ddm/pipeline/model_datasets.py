@@ -3,7 +3,7 @@
 import logging
 import os
 import shutil
-from deepchem.data import NumpyDataset
+from deepchem.data import DiskDataset
 import numpy as np
 import pandas as pd
 import uuid
@@ -273,7 +273,7 @@ class ModelDataset(object):
             combined_train_valid_data (dc.Dataset): A dataset object (initialized as None), of the merged train
             and valid splits
 
-            combined_train_valid_data (dc.NumpyDataset): Cache for combined training and validation data, 
+            combined_train_valid_data (dc.DiskDataset.from_numpy): Cache for combined training and validation data, 
             used by k-fold CV code
 
             subset_response_dict (dictionary): Cache for subset-specific response values matched to IDs, 
@@ -390,7 +390,7 @@ class ModelDataset(object):
                 n_features: The count of features (int)
                 vals: The response col after featurization (np.array)
                 attr: A pd.dataframe containing the compound ids and smiles
-                untranfsormed_dataset: A NumpyDataset containing untransformed data
+                untranfsormed_dataset: A DiskDataset.from_numpy containing untransformed data
         """
         
         if params is None:
@@ -418,7 +418,7 @@ class ModelDataset(object):
                     w = w.astype(np.float32)
 
                 self.update_untransformed_responses(ids, self.vals)
-                self.dataset = NumpyDataset(features, self.vals, ids=ids, w=w)
+                self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w)
                 self.log.info("Using prefeaturized data; number of features = " + str(self.n_features))
                 return
             except AssertionError as a:
@@ -444,7 +444,7 @@ class ModelDataset(object):
            
         # Create the DeepChem dataset       
         self.update_untransformed_responses(ids, self.vals)
-        self.dataset = NumpyDataset(features, self.vals, ids=ids, w=w)
+        self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w)
         # Checking for minimum number of rows
         if len(self.dataset) < params.min_compound_number:
             self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
@@ -726,7 +726,7 @@ class ModelDataset(object):
                     combined_w = np.concatenate((combined_w, fold_w), axis=0)
                     combined_ids = np.concatenate((combined_ids, fold_ids))
 
-            self.combined_train_valid_data = NumpyDataset(combined_X, combined_y, w=combined_w, ids=combined_ids)
+            self.combined_train_valid_data = DiskDataset.from_numpy(combined_X, combined_y, w=combined_w, ids=combined_ids)
         return self.combined_train_valid_data
 
     # ****************************************************************************************
@@ -935,7 +935,7 @@ class MinimalDataset(ModelDataset):
         self.n_features = self.featurization.get_feature_count()
         
         self.update_untransformed_responses(ids, self.vals)
-        self.dataset = NumpyDataset(features, self.vals, ids=ids, w=weights)
+        self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=weights)
 
     # ****************************************************************************************
     def save_featurized_data(self, featurized_dset_df):
@@ -1543,7 +1543,7 @@ class EmbeddingDataset:
            
         # Create the DeepChem dataset       
         self.update_untransformed_responses(ids, self.vals)
-        self.dataset = NumpyDataset(features, self.vals, ids=ids, w=w)
+        self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w)
         # Checking for minimum number of rows
         if len(self.dataset) < params.min_compound_number:
             self.log.warning("Dataset of length %i is shorter than the required length %i" % (len(self.dataset), params.min_compound_number))

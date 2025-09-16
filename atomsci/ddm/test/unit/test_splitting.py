@@ -49,7 +49,7 @@ data_obj_k_fold_random.split_dataset()
 splitter_k_fold_random = data_obj_k_fold_random.splitting
 
 frac_train = 0.8
-DD = dc.data.datasets.NumpyDataset
+DD = dc.data.datasets.DiskDataset.from_numpy
 PDF = pd.core.frame.DataFrame
 
 #***********************************************************************************

@@ -1,7 +1,7 @@
 from deepchem.data import DiskDataset
 import numpy as np
 import pandas as pd
-from atomsci.ddm.pipeline.splitting import DatasetManager, _copy_modify_NumpyDataset
+from atomsci.ddm.pipeline.splitting import DatasetManager, _copy_modify_DiskDataset
 
 def make_test_dataset_and_attr():
     ids = ['a', 'a', 'b', 'b', 'c']
@@ -62,12 +62,12 @@ def check_smiles(expected_smiles, attr_df, smiles_col):
     expanded_smiles = attr_df[smiles_col].values
     assert all([a==b for a, b in zip(expanded_smiles, expected_smiles)]), f'Expecting {expected_smiles}. Expanded {expanded_smiles}'
 
-def test__copy_modify_NumpyDataset():
+def test__copy_modify_DiskDataset():
     dd, attr_df, smiles_col = make_test_dataset_and_attr()
     new_X = np.zeros_like(dd.X)
     new_y = np.zeros_like(dd.y)
 
-    copied_dataset = _copy_modify_NumpyDataset(dd, X=new_X, y=new_y)
+    copied_dataset = _copy_modify_DiskDataset(dd, X=new_X, y=new_y)
     check_arrays(new_X, copied_dataset.X)
     check_arrays(new_y, copied_dataset.y)
 
@@ -183,5 +183,5 @@ if __name__ == '__main__':
     test_DatasetManager_no_dupes()
     test_DatasetManager_doesnot_needs_smiles()
     test_DatasetManager_needs_smiles()
-    test_copy_modify_NumpyDataset()
+    test_copy_modify_DiskDataset()
     test_DatasetManager_many_to_one()
