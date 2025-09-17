@@ -301,7 +301,10 @@ class ModelPipeline:
         """
         if params is None:
             params = self.params
+        self.log.debug("Calling create_model_dataset")
         self.data = model_datasets.create_model_dataset(params, self.featurization, self.ds_client)
+        self.log.debug(f"created: {self.data}")
+        self.log.debug("calling get_featurized_data...")
         self.data.get_featurized_data(params)
 
         if self.run_mode == 'training':
@@ -313,6 +316,7 @@ class ModelPipeline:
                     'Production split will not be saved.')
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
             elif not (params.previously_split and self.data.load_presplit_dataset(random_state=self.random_state, seed=self.seed)):
+                self.log.debug("Splitting dataset...")
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
                 self.data.save_split_dataset()
                 # write split metadata
@@ -643,6 +647,7 @@ class ModelPipeline:
 
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
+        self.log.debug("Start of train model...")
 
         self.run_mode = 'training'
         if self.params.model_type == "hybrid":
@@ -653,11 +658,13 @@ class ModelPipeline:
         if featurization is None:
             featurization = feat.create_featurization(self.params)
         self.featurization = featurization
+        self.log.debug(f"featurisation: {self.featurization}")
 
         ## create model wrapper if not split_only
         if not self.params.split_only:
             self.model_wrapper = model_wrapper.create_model_wrapper(self.params, self.featurization, self.ds_client, random_state=self.random_state, seed=self.seed)
             self.model_wrapper.setup_model_dirs()
+            self.log.debug(f"Created model wrapper: {self.model_wrapper}")
 
         self.load_featurize_data()
 

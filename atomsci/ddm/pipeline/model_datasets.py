@@ -392,6 +392,7 @@ class ModelDataset(object):
                 attr: A pd.dataframe containing the compound ids and smiles
                 untranfsormed_dataset: A DiskDataset.from_numpy containing untransformed data
         """
+        self.log.debug(">> In get featurized dataset")
         
         if params is None:
             params = self.params
@@ -426,9 +427,11 @@ class ModelDataset(object):
             except Exception as e:
                 self.log.debug("Exception when trying to load featurized data:\n%s" % str(e))
                 self.log.info("Featurized dataset not previously saved for dataset %s, creating new" % self.dataset_name)
+                self.log.debug(">>>> in model dataset get featurized data")
                 pass
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
+        self.log.debug(">>> loading full dataset")
         dset_df = self.load_full_dataset()
         sample_only = False
         if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
@@ -444,6 +447,7 @@ class ModelDataset(object):
            
         # Create the DeepChem dataset       
         self.update_untransformed_responses(ids, self.vals)
+        self.log.debug(f">>>>>> creating diskdataset")
         self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w)
         # Checking for minimum number of rows
         if len(self.dataset) < params.min_compound_number:
@@ -1313,6 +1317,7 @@ class FileDataset(ModelDataset):
         Raises:
             exception: if dataset is empty or failed to load
         """
+        self.log.debug("<<<<< loading full dataset")
         dataset_path = self.params.dataset_key
         if not os.path.exists(dataset_path):
             raise Exception("Dataset file %s does not exist" % dataset_path)
@@ -1399,14 +1404,19 @@ class FileDataset(ModelDataset):
         Returns:
             featurized_dset_df (pd.DataFrame): dataframe of the prefeaturized data, needs futher processing
         """
+        self.log.debug("in FileDataset.load_featurized_data...")
+        self.log.debug(f"<<<< load full dataset")
         # First check to set if dataset already has the feature columns we need
         dset_df = self.load_full_dataset()
+        self.log.debug(f"Loaded full dataset {dset_df}")
         if self.has_all_feature_columns(dset_df):
             self.dataset_key = self.params.dataset_key
+            self.log.debug("Returning dset_df from load_featurized_data")
             return dset_df
 
 
         # Otherwise, generate the expected path for the featurized dataset
+        self.log.debug("Generating expected path for the featurised dataset")
         featurized_dset_name = self.featurization.get_featurized_dset_name(self.dataset_name)
         dataset_dir = os.path.dirname(self.params.dataset_key)
         data_dir = os.path.join(dataset_dir, self.featurization.get_featurized_data_subdir())
@@ -1515,6 +1525,7 @@ class EmbeddingDataset:
             except Exception as e:
                 self.log.debug("Exception when trying to load featurized data:\n%s" % str(e))
                 self.log.info("Featurized dataset not previously saved for dataset %s, creating new" % self.input_dataset.dataset_name)
+                self.log.debug(">>>> in embedding dataset get featurized data")
                 pass
 
         # if not, calculate input features
