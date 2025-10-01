@@ -318,9 +318,12 @@ class ModelPipeline:
             elif not (params.previously_split and self.data.load_presplit_dataset(random_state=self.random_state, seed=self.seed)):
                 self.log.debug("Splitting dataset...")
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
+                self.log.debug("Saving split dataset...")
                 self.data.save_split_dataset()
                 # write split metadata
+                self.log.debug("Creating split metadata...")
                 self.create_split_metadata()
+                self.log.debug("Saving split metadata...")
                 self.save_split_metadata()
             if self.data.params.prediction_type == 'classification':
                 self.data._validate_classification_dataset()

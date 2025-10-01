@@ -43,10 +43,13 @@ def create_splitting(params, random_state=None, seed=None):
     """
 
     if params.production:
+        log.debug("Creating ProductionSplitting object...")
         return ProductionSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'train_valid_test':
+        log.debug("Creating TrainValidTestSplitting object...")
         return TrainValidTestSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'k_fold_cv':
+        log.debug("Creating KFoldSplitting object...")
         return KFoldSplitting(params, random_state=random_state, seed=seed)
     else:
         raise Exception("Unknown split strategy %s" % params.split_strategy)
@@ -198,6 +201,7 @@ class Splitting(object):
 
         self.params = params
         self.split = params.splitter
+        log.debug(f"Split initialiser, params.splitter = {params.splitter}")
         if params.production:
             self.splitter = ProductionSplitter()
         elif params.splitter == 'index':
@@ -542,6 +546,8 @@ class TrainValidTestSplitting(Splitting):
             train, valid, test = self.splitter.train_valid_test_split(dataset, 
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
 
+            log.debug(f"splitter else bit... train {train}; valid {valid}; test {test}")
+
         # After splitting unique compound_ids or SMILES are expanded 
         train, train_attr = dm.expand_selection(train.ids)
         valid, valid_attr = dm.expand_selection(valid.ids)
@@ -679,10 +685,15 @@ class DatasetManager:
 
         self.dataset_dup = False
 
+        log.debug(f"attr_df=\n{attr_df}")
+
         # sometimes the ids in dataset_ori is already a SMILES string.
         # since we assume that dataset_ori.ids are compound ids, we replace them with attr_df.index
         if self.needs_smiles:
+            log.debug("Needs smiles...")
             self.dataset_ori = _copy_modify_DiskDataset(self.dataset_ori, ids=self.attr_df.index)
+
+        log.debug(f"DatasetManager init... len(indices)={len(self.dataset_ori.ids)}; len(smiles)={len(self.attr_df[self.smiles_col].values)}")
 
         # self.id_df will be used to map compound_ids or smiles to a set of indices to be used
         # with self.dataset_ori to map back to an expanded dataset after splitting

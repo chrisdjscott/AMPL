@@ -433,47 +433,56 @@ class ModelDataset(object):
                 pass
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
-        self.log.debug(">>> loading full dataset")
-        dset_df_chunks = self.load_full_dataset()
-        self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
-        for chunki, dset_df in enumerate(dset_df_chunks):
-            self.log.debug(f"Loading dset chunk {chunki+1}...")
 
-            # moved from load_full_dataset
-            if dset_df.empty:
-                raise Exception(f"Dataset is empty (chunk {chunki+1})")
-            dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+            def shard_generator():
+                self.log.debug("start of shard_generator")
+                self.log.debug(">>> loading full dataset")
+                dset_df_chunks = self.load_full_dataset()
+                self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
+                for chunki, dset_df in enumerate(dset_df_chunks):
+                    self.log.debug(f"Loading dset chunk {chunki+1}...")
 
-            sample_only = False
-            if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
-                self.log.warning(">> shouldn't be in here...")
-                dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
-                sample_only = True
-            check_task_columns(params, dset_df)
-            self.log.debug(f"calling featurize_data... {self.featurization}")
-            featurise_time = time.time()
-            features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
-            self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
-            if not sample_only:
-                self.log.debug("Calling save_featurized_data...")
-                self.save_featurized_data(featurized_dset_df)
+                    # moved from load_full_dataset
+                    if dset_df.empty:
+                        raise Exception(f"Dataset is empty (chunk {chunki+1})")
+                    dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
 
-            self.n_features = self.featurization.get_feature_count()
-            self.log.debug("Number of features: " + str(self.n_features))
-               
+                    sample_only = False
+                    if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+                        self.log.warning(">> shouldn't be in here...")
+                        dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+                        sample_only = True
+                    check_task_columns(params, dset_df)
+                    self.log.debug(f"calling featurize_data... {self.featurization}")
+                    featurise_time = time.time()
+                    features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+                    self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
+                    if not sample_only:
+                        self.log.debug("Calling save_featurized_data...")
+                        self.save_featurized_data(featurized_dset_df)
+
+                    self.n_features = self.featurization.get_feature_count()
+                    self.log.debug("Number of features: " + str(self.n_features))
+
+                    self.update_untransformed_responses(ids, self.vals)
+
+                    # TODO: need to figure out self.vals
+                    yield features, self.vals, w, ids
+
+                self.log.debug("end of shard_generator")
+
             # Create the DeepChem dataset       
-            self.update_untransformed_responses(ids, self.vals)
             self.log.debug(f">>>>>> creating diskdataset")
             dataset_location = os.getenv("DATASET_ROOT")
             if dataset_location is not None:
-                dataset_location = os.path.join(dataset_location, f"shard-{chunki}")
-            self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w, data_dir=dataset_location)
+                dataset_location = os.path.join(dataset_location, "dataset")
+            self.dataset = DiskDataset.create_dataset(
+                shard_generator(), data_dir=dataset_location
+            )
             self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
             # Checking for minimum number of rows
             if len(self.dataset) < params.min_compound_number:
                 self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
-
-        sys.exit('och')
 
     # ****************************************************************************************
     def get_dataset_tasks(self, dset_df):
@@ -518,12 +527,15 @@ class ModelDataset(object):
 
         # Create object to delegate splitting to.
         if self.splitting is None:
+            self.log.debug("ModelDataset.split_dataset: calling create_splitting...")
             self.splitting = split.create_splitting(self.params, random_state=random_state, seed=seed)
+        self.log.debug("ModelDataset.split_dataset: calling split_dataset...")
         self.train_valid_dsets, self.test_dset, self.train_valid_attr, self.test_attr = \
             self.splitting.split_dataset(self.dataset, self.attr, self.params.smiles_col)
         if self.train_valid_dsets is None:
             raise Exception("Dataset %s did not split properly" % self.dataset_name)
         if self.params.prediction_type == 'classification':
+            self.log.debug("ModelDataset.split_dataset: calling validate_classification_dataset...")
             self._validate_classification_dataset()
 
     # ****************************************************************************************
@@ -1465,6 +1477,7 @@ class FileDataset(ModelDataset):
             directory (str): Directory where the split table will be created. Defaults to the directory
             of the current dataset.
         """
+        self.log.debug("In FileDataset.save_split_dataset...")
 
         split_df = self.create_dataset_split_table()
         if directory is None:
