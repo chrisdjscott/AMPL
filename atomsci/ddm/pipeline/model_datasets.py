@@ -13,6 +13,7 @@ from atomsci.ddm.utils import datastore_functions as dsf
 from pathlib import Path
 import getpass
 import sys
+import time
 
 feather_supported = True
 try:
@@ -332,6 +333,7 @@ class ModelDataset(object):
         else:
             # Reuse existing Featurization object
             self.featurization = featurization
+        self.log.debug(f"Featurization is: {self.featurization}")
 
         if self.params.previously_split and self.params.split_uuid is None:
             raise Exception(
@@ -392,11 +394,11 @@ class ModelDataset(object):
                 attr: A pd.dataframe containing the compound ids and smiles
                 untranfsormed_dataset: A DiskDataset.from_numpy containing untransformed data
         """
-        self.log.debug(">> In get featurized dataset")
+        self.log.debug(">> In ModelDataset.get_featurized_data")
         
         if params is None:
             params = self.params
-        if params.previously_featurized:
+        if params.previously_featurized and False:
             try:
                 self.log.debug("Attempting to load featurized dataset")
                 featurized_dset_df = self.load_featurized_data()
@@ -407,7 +409,7 @@ class ModelDataset(object):
                 features, ids, self.vals, self.attr = self.featurization.extract_prefeaturized_data(
                                                            featurized_dset_df, params)
                 self.n_features = self.featurization.get_feature_count()
-                self.log.debug("Creating deepchem dataset")
+                self.log.debug(f"Got n_features: {self.n_features}")
                 
                 # don't do make_weights which convert all NaN rows into 0 for hybrid model
                 if params.model_type != "hybrid":
@@ -432,26 +434,46 @@ class ModelDataset(object):
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
         self.log.debug(">>> loading full dataset")
-        dset_df = self.load_full_dataset()
-        sample_only = False
-        if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
-            dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
-            sample_only = True
-        check_task_columns(params, dset_df)
-        features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
-        if not sample_only:
-            self.save_featurized_data(featurized_dset_df)
+        dset_df_chunks = self.load_full_dataset()
+        self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
+        for chunki, dset_df in enumerate(dset_df_chunks):
+            self.log.debug(f"Loading dset chunk {chunki+1}...")
 
-        self.n_features = self.featurization.get_feature_count()
-        self.log.debug("Number of features: " + str(self.n_features))
-           
-        # Create the DeepChem dataset       
-        self.update_untransformed_responses(ids, self.vals)
-        self.log.debug(f">>>>>> creating diskdataset")
-        self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w)
-        # Checking for minimum number of rows
-        if len(self.dataset) < params.min_compound_number:
-            self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
+            # moved from load_full_dataset
+            if dset_df.empty:
+                raise Exception(f"Dataset is empty (chunk {chunki+1})")
+            dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+
+            sample_only = False
+            if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+                self.log.warning(">> shouldn't be in here...")
+                dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+                sample_only = True
+            check_task_columns(params, dset_df)
+            self.log.debug(f"calling featurize_data... {self.featurization}")
+            featurise_time = time.time()
+            features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+            self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
+            if not sample_only:
+                self.log.debug("Calling save_featurized_data...")
+                self.save_featurized_data(featurized_dset_df)
+
+            self.n_features = self.featurization.get_feature_count()
+            self.log.debug("Number of features: " + str(self.n_features))
+               
+            # Create the DeepChem dataset       
+            self.update_untransformed_responses(ids, self.vals)
+            self.log.debug(f">>>>>> creating diskdataset")
+            dataset_location = os.getenv("DATASET_ROOT")
+            if dataset_location is not None:
+                dataset_location = os.path.join(dataset_location, f"shard-{chunki}")
+            self.dataset = DiskDataset.from_numpy(features, self.vals, ids=ids, w=w, data_dir=dataset_location)
+            self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
+            # Checking for minimum number of rows
+            if len(self.dataset) < params.min_compound_number:
+                self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
+
+        sys.exit('och')
 
     # ****************************************************************************************
     def get_dataset_tasks(self, dset_df):
@@ -1317,7 +1339,7 @@ class FileDataset(ModelDataset):
         Raises:
             exception: if dataset is empty or failed to load
         """
-        self.log.debug("<<<<< loading full dataset")
+        self.log.debug("<<< FileDataset.load_full_dataset")
         dataset_path = self.params.dataset_key
         if not os.path.exists(dataset_path):
             raise Exception("Dataset file %s does not exist" % dataset_path)
@@ -1326,15 +1348,15 @@ class FileDataset(ModelDataset):
                 raise Exception("feather package not installed in current environment")
             dset_df = feather.read_dataframe(dataset_path)
         elif dataset_path.endswith('.csv'):
-            dset_df = pd.read_csv(dataset_path, index_col=False)
+            dset_df = pd.read_csv(dataset_path, index_col=False, chunksize=int(os.getenv("DATASET_CHUNK_SIZE", 10000)))
         else:
             raise Exception('Dataset %s is not a recognized format (csv or feather)' % dataset_path)
 
         if dset_df is None:
             raise Exception("Failed to load dataset %s" % dataset_path)
-        if dset_df.empty:
-            raise Exception("Dataset %s is empty" % dataset_path)
-        dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+#        if dset_df.empty:
+#            raise Exception("Dataset %s is empty" % dataset_path)
+#        dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
         return dset_df
 
     # ****************************************************************************************

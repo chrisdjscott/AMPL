@@ -794,6 +794,7 @@ class DynamicFeaturization(Featurization):
             with generated feature columns.
 
         """
+        log.debug("Start of featurize_data...")
         attr = get_dataset_attributes(dset_df, params)
         features, is_valid = featurize_smiles(dset_df, featurizer=self.featurizer_obj, smiles_col=params.smiles_col)
 
