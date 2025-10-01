@@ -434,6 +434,9 @@ class ModelDataset(object):
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
 
+            self.attr_list = []
+            self.vals_list = []
+            self.attr = None
             def shard_generator():
                 self.log.debug("start of shard_generator")
                 self.log.debug(">>> loading full dataset")
@@ -455,8 +458,16 @@ class ModelDataset(object):
                     check_task_columns(params, dset_df)
                     self.log.debug(f"calling featurize_data... {self.featurization}")
                     featurise_time = time.time()
-                    features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+                    features, ids, self.vals, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+                    self.attr_list.append(attr_tmp)
+                    self.vals_list.append(self.vals)
                     self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
+                    self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(self.vals)}")
+                    self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
+                    self.log.debug(f"self.vals: {self.vals.shape}")
+                    self.log.debug(f"self.attr:\n{attr_tmp}")
+                    self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
+
                     if not sample_only:
                         self.log.debug("Calling save_featurized_data...")
                         self.save_featurized_data(featurized_dset_df)
@@ -480,6 +491,12 @@ class ModelDataset(object):
                 shard_generator(), data_dir=dataset_location
             )
             self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
+
+            # TODO: concat this in the loop above...
+            self.attr = pd.concat(self.attr_list)
+            self.attr_list = None
+            print(f"Created full attr df:\n{self.attr.info()}")
+
             # Checking for minimum number of rows
             if len(self.dataset) < params.min_compound_number:
                 self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
