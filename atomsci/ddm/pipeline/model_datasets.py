@@ -434,76 +434,74 @@ class ModelDataset(object):
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
 
-            self.attr_list = []
-            self.vals_list = []
-            self.attr = None
-            def shard_generator():
-                self.log.debug("start of shard_generator")
-                self.log.debug(">>> loading full dataset")
-                dset_df_chunks = self.load_full_dataset()
-                self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
-                for chunki, dset_df in enumerate(dset_df_chunks):
-                    self.log.debug(f"Loading dset chunk {chunki+1}...")
-
-                    # moved from load_full_dataset
-                    if dset_df.empty:
-                        raise Exception(f"Dataset is empty (chunk {chunki+1})")
-                    dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
-
-                    sample_only = False
-                    if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
-                        self.log.warning(">> shouldn't be in here...")
-                        dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
-                        sample_only = True
-                    check_task_columns(params, dset_df)
-                    self.log.debug(f"calling featurize_data... {self.featurization}")
-                    featurise_time = time.time()
-                    features, ids, vals_tmp, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
-                    self.attr_list.append(attr_tmp)
-                    self.vals_list.append(vals_tmp)
-                    self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
-                    self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(vals_tmp)}")
-                    self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
-                    self.log.debug(f"self.vals: {vals_tmp.shape}")
-                    self.log.debug(f"self.attr:\n{attr_tmp}")
-                    self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
-
-                    if not sample_only:
-                        self.log.debug("Calling save_featurized_data...")
-                        self.save_featurized_data(featurized_dset_df)
-
-                    self.n_features = self.featurization.get_feature_count()
-                    self.log.debug("Number of features: " + str(self.n_features))
-
-                    self.update_untransformed_responses(ids, vals_tmp)
-
-                    # TODO: need to figure out self.vals
-                    yield features, vals_tmp, w, ids
-
-                self.log.debug("end of shard_generator")
-
             # Create the DeepChem dataset       
-            self.log.debug(f">>>>>> creating diskdataset")
             dataset_location = os.getenv("DATASET_ROOT")
             dataset_location = os.path.join(dataset_location, "dataset")
+            self.log.debug(f">>>>>> creating diskdataset: {dataset_location}")
             self.dataset = DiskDataset.create_dataset(
-                shard_generator(), data_dir=dataset_location
+                self.shard_generator(params), data_dir=dataset_location
             )
             self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
-
-            # TODO: concat these in the loop above if they need to be stored in full...
-            self.log.debug(f"LEN attr_list {len(self.attr_list)}")
-            self.attr = pd.concat(self.attr_list)
-            self.attr_list = None
-            self.log.debug(f"Created full attr df: {self.attr.shape}, {self.attr.columns}")
-            self.vals = np.concatenate(self.vals_list, axis=0)
-            self.vals_list = None
-            self.log.debug(f"Created full vals array: {self.vals.shape}")
 
             # Checking for minimum number of rows
             if len(self.dataset) < params.min_compound_number:
                 self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
 
+    def shard_generator(self, params):
+        self.log.debug("start of shard_generator")
+        self.log.debug(">>> loading full dataset")
+        self.attr_list = []
+        self.vals_list = []
+        dset_df_chunks = self.load_full_dataset()
+        self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
+        for chunki, dset_df in enumerate(dset_df_chunks):
+            self.log.debug(f"Loading dset chunk {chunki+1}...")
+
+            # moved from load_full_dataset
+            if dset_df.empty:
+                raise Exception(f"Dataset is empty (chunk {chunki+1})")
+            dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+
+            sample_only = False
+            if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+                self.log.warning(">> shouldn't be in here...")
+                dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+                sample_only = True
+            check_task_columns(params, dset_df)
+            self.log.debug(f"calling featurize_data... {self.featurization}")
+            featurise_time = time.time()
+            features, ids, vals_tmp, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+            self.attr_list.append(attr_tmp)
+            self.vals_list.append(vals_tmp)
+            self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
+            self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(vals_tmp)}")
+            self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
+            self.log.debug(f"self.vals: {vals_tmp.shape}")
+            self.log.debug(f"self.attr:\n{attr_tmp}")
+            self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
+
+            if not sample_only:
+                self.log.debug("Calling save_featurized_data...")
+                self.save_featurized_data(featurized_dset_df)
+
+            self.n_features = self.featurization.get_feature_count()
+            self.log.debug("Number of features: " + str(self.n_features))
+
+            self.update_untransformed_responses(ids, vals_tmp)
+
+            # TODO: need to figure out self.vals
+            yield features, vals_tmp, w, ids
+
+        # TODO: concat these in the loop above if they need to be stored in full...
+        self.log.debug(f"LEN attr_list {len(self.attr_list)}")
+        self.attr = pd.concat(self.attr_list)
+        self.attr_list = None
+        self.log.debug(f"Created full attr df: {self.attr.shape}, {self.attr.columns}")
+        self.vals = np.concatenate(self.vals_list, axis=0)
+        self.vals_list = None
+        self.log.debug(f"Created full vals array: {self.vals.shape}")
+
+        self.log.debug("end of shard_generator")
     # ****************************************************************************************
     def get_dataset_tasks(self, dset_df):
         """Sets self.tasks to the list of prediction task (response) columns defined by the current model parameters.
