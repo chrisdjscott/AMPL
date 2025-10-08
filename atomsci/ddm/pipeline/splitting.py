@@ -2,6 +2,7 @@
 testing, generation of predicted values and performance metrics.
 """
 
+import os
 import logging
 import copy
 import deepchem as dc
@@ -487,6 +488,7 @@ class TrainValidTestSplitting(Splitting):
 
         """
         log.info("Splitting data by %s" % self.params.splitter)
+        log.debug(f"Needs smiles: {self.needs_smiles()}")
 
         # Duplicate SMILES and compound_ids are merged into single compounds
         # in DatasetManager. The first instance of each is kept. Assumes many to one 
@@ -547,6 +549,9 @@ class TrainValidTestSplitting(Splitting):
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
 
             log.debug(f"splitter else bit... train {train}; valid {valid}; test {test}")
+            log.debug(f"train: {train.data_dir}")
+            log.debug(f"valid: {valid.data_dir}")
+            log.debug(f"test: {test.data_dir}")
 
         # After splitting unique compound_ids or SMILES are expanded 
         train, train_attr = dm.expand_selection(train.ids)
@@ -678,7 +683,10 @@ class DatasetManager:
 
             smiles_col (string): name of SMILES column (hack for now until deepchem fixes scaffold and butina splitters)
         """
-        self.dataset_ori = copy.deepcopy(dataset)
+        #self.dataset_ori = copy.deepcopy(dataset)
+        dataset_location = os.getenv("DATASET_ROOT")
+        dataset_location = os.path.join(dataset_location, "dataset-copy")
+        self.dataset_ori = dataset.copy(dataset_location)
         self.attr_df = attr_df
         self.smiles_col = smiles_col
         self.needs_smiles = needs_smiles
@@ -702,7 +710,9 @@ class DatasetManager:
             "compound_id": [str(e) for e in self.dataset_ori.ids],
             "smiles": self.attr_df[self.smiles_col].values})
         # add columns for weights
+        print(f"self.id_df:\n{self.id_df.info()}")
         ws = self.dataset_ori.w # get the weights
+        print(f"ws = {ws}")
         self.w_cols = [f'w{c}' for c in range(ws.shape[1])]
         for i, col in enumerate(self.w_cols):
             self.id_df[col] = ws[:,i]
@@ -748,6 +758,7 @@ class DatasetManager:
             sub_dataset = _copy_modify_DiskDataset(sub_dataset, w=sel_df[self.w_cols].values)
 
         if self.needs_smiles:
+            self.log.debug("In compact dataset - needs smiles")
             # Some DeepChem splitters require compound IDs in dataset to be SMILES strings. Swap in the
             # SMILES strings now; we'll reverse this later.
             sub_dataset = _copy_modify_DiskDataset(sub_dataset, ids=sel_df.smiles.values)

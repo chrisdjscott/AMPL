@@ -340,6 +340,7 @@ class ModelPipeline:
         # is fitted to the training data only. The transformers are then applied to the training,
         # validation and test sets separately.
         if not params.split_only:
+            self.log.debug("ModelPipeline.load_featurize_data: calling create_transformers")
             self.model_wrapper.create_transformers(trans.get_all_training_datasets(self.data))
         else:
             self.run_mode = ''
@@ -675,6 +676,7 @@ class ModelPipeline:
         if self.params.split_only:
             return
 
+        self.log.debug("calling model_wrapper.train")
         self.model_wrapper.train(self)
 
         # Create the metadata for the trained model

@@ -458,13 +458,13 @@ class ModelDataset(object):
                     check_task_columns(params, dset_df)
                     self.log.debug(f"calling featurize_data... {self.featurization}")
                     featurise_time = time.time()
-                    features, ids, self.vals, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+                    features, ids, vals_tmp, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
                     self.attr_list.append(attr_tmp)
-                    self.vals_list.append(self.vals)
+                    self.vals_list.append(vals_tmp)
                     self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
-                    self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(self.vals)}")
+                    self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(vals_tmp)}")
                     self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
-                    self.log.debug(f"self.vals: {self.vals.shape}")
+                    self.log.debug(f"self.vals: {vals_tmp.shape}")
                     self.log.debug(f"self.attr:\n{attr_tmp}")
                     self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
 
@@ -475,27 +475,30 @@ class ModelDataset(object):
                     self.n_features = self.featurization.get_feature_count()
                     self.log.debug("Number of features: " + str(self.n_features))
 
-                    self.update_untransformed_responses(ids, self.vals)
+                    self.update_untransformed_responses(ids, vals_tmp)
 
                     # TODO: need to figure out self.vals
-                    yield features, self.vals, w, ids
+                    yield features, vals_tmp, w, ids
 
                 self.log.debug("end of shard_generator")
 
             # Create the DeepChem dataset       
             self.log.debug(f">>>>>> creating diskdataset")
             dataset_location = os.getenv("DATASET_ROOT")
-            if dataset_location is not None:
-                dataset_location = os.path.join(dataset_location, "dataset")
+            dataset_location = os.path.join(dataset_location, "dataset")
             self.dataset = DiskDataset.create_dataset(
                 shard_generator(), data_dir=dataset_location
             )
             self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
 
-            # TODO: concat this in the loop above...
+            # TODO: concat these in the loop above if they need to be stored in full...
+            self.log.debug(f"LEN attr_list {len(self.attr_list)}")
             self.attr = pd.concat(self.attr_list)
             self.attr_list = None
-            print(f"Created full attr df:\n{self.attr.info()}")
+            self.log.debug(f"Created full attr df: {self.attr.shape}, {self.attr.columns}")
+            self.vals = np.concatenate(self.vals_list, axis=0)
+            self.vals_list = None
+            self.log.debug(f"Created full vals array: {self.vals.shape}")
 
             # Checking for minimum number of rows
             if len(self.dataset) < params.min_compound_number:
@@ -1265,7 +1268,7 @@ class DatastoreDataset(ModelDataset):
                            key_values=keyval_dict,
                            client=self.ds_client,
                            dataset_key=split_table_key)
-        print("save split info",split_table_key,self.params.bucket,self.split_uuid)
+        self.log.info("save split info",split_table_key,self.params.bucket,self.split_uuid)
         self.log.info('Dataset split_uuid = %s' % self.split_uuid)
         self.log.info('Dataset split table saved to datastore bucket %s with dataset_key %s' % (self.params.bucket,
                       split_table_key))
