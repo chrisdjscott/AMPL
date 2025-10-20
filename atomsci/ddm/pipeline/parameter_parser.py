@@ -781,7 +781,7 @@ def dict_to_list(inp_dictionary,replace_spaces=False):
     temp_list_to_command_line = []
 
     # Special case handling for arguments that are False or True by default
-    default_false = ['previously_split','use_shortlist','datastore', 'save_results','verbose', 'hyperparam', 'split_only', 'is_ki', 'production', 'embedding_and_features'] 
+    default_false = ['previously_split','use_shortlist','datastore', 'save_results','verbose', 'hyperparam', 'split_only', 'is_ki', 'production', 'embedding_and_features', 'use_disk_dataset']
     default_true = ['transformers','previously_featurized','uncertainty', 'rerun']
     for key, value in inp_dictionary.items():
         if key in default_false:
@@ -1054,6 +1054,17 @@ def get_parser():
         '--seed', dest='seed', default=None,
         help='Random seed used for initializing the random number generator to ensure results are reproducible.'
         'Default is None and a random seed will be generated.')
+    parser.add_argument(
+        '--use_disk_dataset', dest='use_disk_dataset', action='store_true',
+        help='Use DiskDataset instead of NumpyDataset for memory efficiency with large datasets')
+    parser.set_defaults(use_disk_dataset=False)
+    parser.add_argument(
+        '--disk_dataset_root', dest='disk_dataset_root', default=None, type=str,
+        help='Root directory for storing disk datasets under (defaults to temporary directories is not specified)'
+    )
+    parser.add_argument(
+        '--shard_size', dest='shard_size', type=int, default=10000,
+        help='Number of compounds per shard when using DiskDataset')
 
     # **********************************************************************************************************
     # model_building_parameters: graphconv

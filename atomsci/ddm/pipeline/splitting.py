@@ -2,12 +2,13 @@
 testing, generation of predicted values and performance metrics.
 """
 
+import os
 import logging
 import copy
 import deepchem as dc
 import numpy as np
 import pandas as pd
-from deepchem.data import NumpyDataset
+from deepchem.data import NumpyDataset, DiskDataset
 from atomsci.ddm.pipeline.ave_splitter import AVEMinSplitter
 from atomsci.ddm.pipeline.temporal_splitter import TemporalSplitter
 from atomsci.ddm.pipeline.MultitaskScaffoldSplit import MultitaskScaffoldSplitter
@@ -43,10 +44,13 @@ def create_splitting(params, random_state=None, seed=None):
     """
 
     if params.production:
+        log.debug("Creating ProductionSplitting object...")
         return ProductionSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'train_valid_test':
+        log.debug("Creating TrainValidTestSplitting object...")
         return TrainValidTestSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'k_fold_cv':
+        log.debug("Creating KFoldSplitting object...")
         return KFoldSplitting(params, random_state=random_state, seed=seed)
     else:
         raise Exception("Unknown split strategy %s" % params.split_strategy)
@@ -198,6 +202,7 @@ class Splitting(object):
 
         self.params = params
         self.split = params.splitter
+        log.debug(f"Split initialiser: params.splitter = {params.splitter}")
         if params.production:
             self.splitter = ProductionSplitter()
         elif params.splitter == 'index':
@@ -483,6 +488,7 @@ class TrainValidTestSplitting(Splitting):
 
         """
         log.info("Splitting data by %s" % self.params.splitter)
+        log.debug(f"Needs smiles: {self.needs_smiles()}")
 
         # Duplicate SMILES and compound_ids are merged into single compounds
         # in DatasetManager. The first instance of each is kept. Assumes many to one 
@@ -538,9 +544,15 @@ class TrainValidTestSplitting(Splitting):
                 num_generations=self.params.mtss_num_generations,
                 seed=self.seed)
         else:
+            log.debug("Doing train_valid_test_split...")
             train_frac = 1.0 - self.params.split_valid_frac - self.params.split_test_frac
             train, valid, test = self.splitter.train_valid_test_split(dataset, 
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
+
+            log.debug(f"train {train}; valid {valid}; test {test}")
+            log.debug(f"train dir: {train.data_dir}")
+            log.debug(f"valid dir: {valid.data_dir}")
+            log.debug(f"test dir: {test.data_dir}")
 
         # After splitting unique compound_ids or SMILES are expanded 
         train, train_attr = dm.expand_selection(train.ids)
@@ -672,7 +684,12 @@ class DatasetManager:
 
             smiles_col (string): name of SMILES column (hack for now until deepchem fixes scaffold and butina splitters)
         """
-        self.dataset_ori = copy.deepcopy(dataset)
+        if isinstance(dataset, DiskDataset):
+            dataset_path = dataset.data_dir + "-copy"
+            self.dataset_ori = dataset.copy(dataset_path)
+            log.debug(f"DatasetManager: copied disk dataset to: {self.dataset_ori.data_dir}")
+        else:
+            self.dataset_ori = copy.deepcopy(dataset)
         self.attr_df = attr_df
         self.smiles_col = smiles_col
         self.needs_smiles = needs_smiles
@@ -682,7 +699,14 @@ class DatasetManager:
         # sometimes the ids in dataset_ori is already a SMILES string.
         # since we assume that dataset_ori.ids are compound ids, we replace them with attr_df.index
         if self.needs_smiles:
-            self.dataset_ori = _copy_modify_NumpyDataset(self.dataset_ori, ids=self.attr_df.index)
+            if isinstance(dataset, DiskDataset):
+                import warnings
+                warnings.warn("In DatasetManager: check dataset_ori with_smiles...")
+                self.dataset_ori.ids[:] = self.attr_df.index[:]
+            else:
+                self.dataset_ori = _copy_modify_NumpyDataset(self.dataset_ori, ids=self.attr_df.index)
+
+        log.debug(f"DatasetManager init... len(indices)={len(self.dataset_ori.ids)}; len(smiles)={len(self.attr_df[self.smiles_col].values)}")
 
         # self.id_df will be used to map compound_ids or smiles to a set of indices to be used
         # with self.dataset_ori to map back to an expanded dataset after splitting
@@ -690,8 +714,10 @@ class DatasetManager:
             "indices" : np.arange(len(self.dataset_ori.ids), dtype=np.int32), 
             "compound_id": [str(e) for e in self.dataset_ori.ids],
             "smiles": self.attr_df[self.smiles_col].values})
+        print(f"self.id_df:\n{self.id_df.info()}")
         # add columns for weights
         ws = self.dataset_ori.w # get the weights
+        print(f"ws = {ws}")
         self.w_cols = [f'w{c}' for c in range(ws.shape[1])]
         for i, col in enumerate(self.w_cols):
             self.id_df[col] = ws[:,i]
@@ -706,6 +732,9 @@ class DatasetManager:
         Builds a new dataset with no duplicates in ids (compounds or smiles). This assumes
         a many to one mapping between SMILES and compound ids
         """
+        import warnings
+        warnings.warn("Haven't converted compact_dataset")
+
         sub_dataset = self.dataset_ori
         sel_df = self.id_df
         if check_if_dupe_smiles_dataset(self.dataset_ori, self.attr_df, self.smiles_col):

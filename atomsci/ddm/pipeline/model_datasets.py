@@ -2,8 +2,10 @@
 
 import logging
 import os
+import time
+import tempfile
 import shutil
-from deepchem.data import NumpyDataset
+from deepchem.data import NumpyDataset, DiskDataset
 import numpy as np
 import pandas as pd
 import uuid
@@ -397,6 +399,9 @@ class ModelDataset(object):
             params = self.params
         if params.previously_featurized:
             try:
+                if params.use_disk_dataset:
+                    raise RuntimeError("Previously featurized option not compatible with disk dataset")
+
                 self.log.debug("Attempting to load featurized dataset")
                 featurized_dset_df = self.load_featurized_data()
                 if (params.max_dataset_rows > 0) and (len(featurized_dset_df) > params.max_dataset_rows):
@@ -406,8 +411,8 @@ class ModelDataset(object):
                 features, ids, self.vals, self.attr = self.featurization.extract_prefeaturized_data(
                                                            featurized_dset_df, params)
                 self.n_features = self.featurization.get_feature_count()
-                self.log.debug("Creating deepchem dataset")
-                
+                self.log.debug(f"Got n_features: {self.n_features}")
+
                 # don't do make_weights which convert all NaN rows into 0 for hybrid model
                 if params.model_type != "hybrid":
                     self.vals, w = feat.make_weights(self.vals, is_class=params.prediction_type=='classification')
@@ -429,25 +434,107 @@ class ModelDataset(object):
                 pass
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
-        dset_df = self.load_full_dataset()
-        sample_only = False
-        if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
-            dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
-            sample_only = True
-        check_task_columns(params, dset_df)
-        features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
-        if not sample_only:
-            self.save_featurized_data(featurized_dset_df)
 
-        self.n_features = self.featurization.get_feature_count()
-        self.log.debug("Number of features: " + str(self.n_features))
-           
-        # Create the DeepChem dataset       
-        self.update_untransformed_responses(ids, self.vals)
-        self.dataset = NumpyDataset(features, self.vals, ids=ids, w=w)
+        if self.params.use_disk_dataset:
+            self.log.info("Creating new sharded, featurized dataset for dataset %s" % self.dataset_name)
+
+            # Create the DeepChem dataset
+            self.disk_dataset_root = self.params.disk_dataset_root
+            if self.disk_dataset_root is None:
+                self.disk_dataset_root = tempfile.mkdtemp()
+                # TODO: clean this up at the end
+            dataset_location = os.path.join(self.disk_dataset_root, "dataset")
+            self.log.debug(f"Creating diskdataset: {dataset_location}")
+            self.dataset = DiskDataset.create_dataset(
+                self.shard_generator(params), data_dir=dataset_location
+            )
+            self.log.debug(f"Dataset created at: {self.dataset.data_dir}")
+
+        else:
+            self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
+
+            dset_df = self.load_full_dataset()
+            sample_only = False
+            if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+                dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+                sample_only = True
+            check_task_columns(params, dset_df)
+            features, ids, self.vals, self.attr, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+            if not sample_only:
+                self.save_featurized_data(featurized_dset_df)
+
+            self.n_features = self.featurization.get_feature_count()
+            self.log.debug("Number of features: " + str(self.n_features))
+
+            # Create the DeepChem dataset
+            self.update_untransformed_responses(ids, self.vals)
+            self.dataset = NumpyDataset(features, self.vals, ids=ids, w=w)
+
         # Checking for minimum number of rows
         if len(self.dataset) < params.min_compound_number:
             self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
+
+    def shard_generator(self, params):
+        """
+        Generates shards for the DiskDataset
+        """
+        self.log.debug("start of shard_generator")
+        self.attr_list = []
+        self.vals_list = []
+        dset_df_chunks = self.load_full_dataset()
+        self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
+        for chunki, dset_df in enumerate(dset_df_chunks):
+            self.log.debug(f"Loading dset chunk {chunki+1}...")
+
+            if dset_df.empty:
+                raise Exception(f"Dataset is empty (chunk {chunki+1})")
+            dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+
+            sample_only = False
+            if params.max_dataset_rows > 0:
+                self.log.warning("Setting max_dataset_rows>0 is unlikely to work with DiskDataset")
+            if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+                self.log.warning(">> shouldn't be in here...")
+                dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+                sample_only = True
+
+            # TODO: need to check this function
+            check_task_columns(params, dset_df)
+
+            self.log.debug(f"calling featurize_data... {self.featurization}")
+            featurise_time = time.time()
+            features, ids, vals_tmp, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
+            self.attr_list.append(attr_tmp)
+            self.vals_list.append(vals_tmp)
+            self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
+            self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(vals_tmp)}, {vals_tmp.dtype}")
+            self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
+            self.log.debug(f"self.vals: {vals_tmp.shape}")
+            self.log.debug(f"self.attr:\n{attr_tmp}")
+            self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
+
+            if not sample_only:
+                self.log.debug("Calling save_featurized_data...")
+                self.save_featurized_data(featurized_dset_df)
+
+            self.n_features = self.featurization.get_feature_count()
+            self.log.debug("Number of features: " + str(self.n_features))
+
+            # TODO: need to check this function
+            self.update_untransformed_responses(ids, vals_tmp)
+
+            yield features, vals_tmp, w, ids
+
+        # TODO: concat these in the loop above if they need to be stored in full...
+        self.log.debug(f"LEN attr_list {len(self.attr_list)}")
+        self.attr = pd.concat(self.attr_list)
+        self.attr_list = None
+        self.log.debug(f"Created full attr df: {self.attr.shape}, {self.attr.columns}")
+        self.vals = np.concatenate(self.vals_list, axis=0)
+        self.vals_list = None
+        self.log.debug(f"Created full vals array: {self.vals.shape}")
+
+        self.log.debug("end of shard_generator")
 
     # ****************************************************************************************
     def get_dataset_tasks(self, dset_df):
@@ -489,6 +576,7 @@ class ModelDataset(object):
 
                test_attr: The attribute DataFrame for the test set, containing compound IDs and SMILES strings.
         """
+        self.log.debug("Start of ModelDataset.split_dataset...")
 
         # Create object to delegate splitting to.
         if self.splitting is None:
@@ -698,6 +786,8 @@ class ModelDataset(object):
         Side effects:
             Overwrites the combined_train_valid_data attribute of the ModelDataset with the combined data
         """
+        self.log.debug("Start of ModelDataset.combined_training_data...")
+
         # All of the splits have the same combined train/valid data, regardless of whether we're using
         # k-fold or train/valid/test splitting.
         if self.combined_train_valid_data is None:
@@ -726,6 +816,8 @@ class ModelDataset(object):
                     combined_w = np.concatenate((combined_w, fold_w), axis=0)
                     combined_ids = np.concatenate((combined_ids, fold_ids))
 
+            import warnings
+            warnings.warn("Need to convert to DiskDataset in ModelDataset.combined_training_data")
             self.combined_train_valid_data = NumpyDataset(combined_X, combined_y, w=combined_w, ids=combined_ids)
         return self.combined_train_valid_data
 
@@ -1314,6 +1406,10 @@ class FileDataset(ModelDataset):
             exception: if dataset is empty or failed to load
         """
         dataset_path = self.params.dataset_key
+
+        if self.params.use_disk_dataset and not dataset_path.endswith(".csv"):
+            raise RuntimeError("Disk dataset only supported with CSV input files")
+
         if not os.path.exists(dataset_path):
             raise Exception("Dataset file %s does not exist" % dataset_path)
         if dataset_path.endswith('.feather'):
@@ -1321,15 +1417,20 @@ class FileDataset(ModelDataset):
                 raise Exception("feather package not installed in current environment")
             dset_df = feather.read_dataframe(dataset_path)
         elif dataset_path.endswith('.csv'):
-            dset_df = pd.read_csv(dataset_path, index_col=False)
+            if self.params.use_disk_dataset:
+                self.log.debug(f"Loading CSV file with chunk size: {self.params.shard_size}")
+                dset_df = pd.read_csv(dataset_path, index_col=False, chunksize=self.params.shard_size)
+            else:
+                dset_df = pd.read_csv(dataset_path, index_col=False)
         else:
             raise Exception('Dataset %s is not a recognized format (csv or feather)' % dataset_path)
 
         if dset_df is None:
             raise Exception("Failed to load dataset %s" % dataset_path)
-        if dset_df.empty:
-            raise Exception("Dataset %s is empty" % dataset_path)
-        dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
+        if not self.params.use_disk_dataset:
+            if dset_df.empty:
+                raise Exception("Dataset %s is empty" % dataset_path)
+            dset_df[self.params.id_col] = dset_df[self.params.id_col].astype(str)
         return dset_df
 
     # ****************************************************************************************

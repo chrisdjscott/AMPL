@@ -301,7 +301,10 @@ class ModelPipeline:
         """
         if params is None:
             params = self.params
+        self.log.debug("Calling create_model_dataset")
         self.data = model_datasets.create_model_dataset(params, self.featurization, self.ds_client)
+        self.log.debug(f"created: {self.data}")
+        self.log.debug("calling get_featurized_data...")
         self.data.get_featurized_data(params)
 
         if self.run_mode == 'training':
@@ -313,10 +316,14 @@ class ModelPipeline:
                     'Production split will not be saved.')
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
             elif not (params.previously_split and self.data.load_presplit_dataset(random_state=self.random_state, seed=self.seed)):
+                self.log.debug("Splitting dataset...")
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
+                self.log.debug("Saving split dataset...")
                 self.data.save_split_dataset()
                 # write split metadata
+                self.log.debug("Creating split metadata...")
                 self.create_split_metadata()
+                self.log.debug("Saving split metadata...")
                 self.save_split_metadata()
             if self.data.params.prediction_type == 'classification':
                 self.data._validate_classification_dataset()
@@ -333,6 +340,7 @@ class ModelPipeline:
         # is fitted to the training data only. The transformers are then applied to the training,
         # validation and test sets separately.
         if not params.split_only:
+            self.log.debug("ModelPipeline.load_featurize_data: calling create_transformers")
             self.model_wrapper.create_transformers(trans.get_all_training_datasets(self.data))
         else:
             self.run_mode = ''
@@ -643,6 +651,7 @@ class ModelPipeline:
 
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
+        self.log.debug("Start of train model...")
 
         self.run_mode = 'training'
         if self.params.model_type == "hybrid":
@@ -653,11 +662,13 @@ class ModelPipeline:
         if featurization is None:
             featurization = feat.create_featurization(self.params)
         self.featurization = featurization
+        self.log.debug(f"featurisation: {self.featurization}")
 
         ## create model wrapper if not split_only
         if not self.params.split_only:
             self.model_wrapper = model_wrapper.create_model_wrapper(self.params, self.featurization, self.ds_client, random_state=self.random_state, seed=self.seed)
             self.model_wrapper.setup_model_dirs()
+            self.log.debug(f"Created model wrapper: {self.model_wrapper}")
 
         self.load_featurize_data()
 
@@ -665,6 +676,7 @@ class ModelPipeline:
         if self.params.split_only:
             return
 
+        self.log.debug("calling model_wrapper.train")
         self.model_wrapper.train(self)
 
         # Create the metadata for the trained model

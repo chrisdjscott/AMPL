@@ -187,6 +187,7 @@ def create_model_wrapper(params, featurizer, ds_client=None, random_state=None, 
     """
     if params.model_type == 'NN':
         if params.featurizer == 'graphconv':
+            logging.debug("Creating GraphConvDCModelWrapper")
             return GraphConvDCModelWrapper(params, featurizer, ds_client, random_state=random_state, seed=seed)
         else:
             return MultitaskDCModelWrapper(params, featurizer, ds_client, random_state=random_state, seed=seed)
@@ -902,6 +903,7 @@ class NNModelWrapper(ModelWrapper):
         if num_folds > 1:
             self.train_kfold_cv(pipeline)
         else:
+            logging.debug("model wrapper calling training_with_early_stopping")
             self.train_with_early_stopping(pipeline)
 
     # ****************************************************************************************
