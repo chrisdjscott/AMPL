@@ -2,7 +2,7 @@
 testing, generation of predicted values and performance metrics.
 """
 
-import os
+import warnings
 import logging
 import copy
 import deepchem as dc
@@ -550,9 +550,10 @@ class TrainValidTestSplitting(Splitting):
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
 
             log.debug(f"train {train}; valid {valid}; test {test}")
-            log.debug(f"train dir: {train.data_dir}")
-            log.debug(f"valid dir: {valid.data_dir}")
-            log.debug(f"test dir: {test.data_dir}")
+            if isinstance(train, DiskDataset):
+                log.debug(f"train dir: {train.data_dir}")
+                log.debug(f"valid dir: {valid.data_dir}")
+                log.debug(f"test dir: {test.data_dir}")
 
         # After splitting unique compound_ids or SMILES are expanded 
         train, train_attr = dm.expand_selection(train.ids)
@@ -654,6 +655,9 @@ def _copy_modify_NumpyDataset(dataset, **kwargs):
     """Create a copy of the DeepChem Dataset object `dataset` and then modify it based on the given keyword arguments.
     This is useful for updating attributes like dataset.w or dataset.id
     """
+    if isinstance(dataset, DiskDataset):
+        raise NotImplementedError("Need to implement a version of _copy_modify_NumpyDataset for DiskDataset")
+
     args = {'X':dataset.X,
         'y':dataset.y,
         'w':dataset.w,
@@ -700,7 +704,6 @@ class DatasetManager:
         # since we assume that dataset_ori.ids are compound ids, we replace them with attr_df.index
         if self.needs_smiles:
             if isinstance(dataset, DiskDataset):
-                import warnings
                 warnings.warn("In DatasetManager: check dataset_ori with_smiles...")
                 self.dataset_ori.ids[:] = self.attr_df.index[:]
             else:
@@ -732,12 +735,10 @@ class DatasetManager:
         Builds a new dataset with no duplicates in ids (compounds or smiles). This assumes
         a many to one mapping between SMILES and compound ids
         """
-        import warnings
-        warnings.warn("Haven't converted compact_dataset")
-
         sub_dataset = self.dataset_ori
         sel_df = self.id_df
         if check_if_dupe_smiles_dataset(self.dataset_ori, self.attr_df, self.smiles_col):
+            warnings.warn("Haven't converted compact_dataset")
             log.info("Duplicate ids or smiles in the dataset, will deduplicate first and assign all records per compound ID to same partition")
             self.dataset_dup = True
 
@@ -758,7 +759,7 @@ class DatasetManager:
                 sel_df = self.id_df.groupby('smiles', as_index=False).agg(agg_dict)
             else:
                 sel_df = self.id_df.groupby('compound_id', as_index=False).agg(agg_dict)
-            
+
             # sub_dataset no longer contains duplicate compounds
             sub_dataset = sub_dataset.select(sel_df.indices.values)
 
