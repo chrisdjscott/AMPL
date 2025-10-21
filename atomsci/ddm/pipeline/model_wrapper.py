@@ -7,6 +7,7 @@ import shutil
 import joblib
 
 import deepchem as dc
+from deepchem.data import DiskDataset
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -53,6 +54,8 @@ import atomsci.ddm.pipeline.parameter_parser as pp
 from tensorflow.python.keras.utils.layer_utils import count_params
 
 logging.basicConfig(format='%(asctime)-15s %(message)s')
+
+log = logging.getLogger("ATOM")
 
 def get_latest_pytorch_checkpoint(model, model_dir=None):
     """Gets the latest torch model
@@ -187,7 +190,7 @@ def create_model_wrapper(params, featurizer, ds_client=None, random_state=None, 
     """
     if params.model_type == 'NN':
         if params.featurizer == 'graphconv':
-            logging.debug("Creating GraphConvDCModelWrapper")
+            log.debug("Creating GraphConvDCModelWrapper")
             return GraphConvDCModelWrapper(params, featurizer, ds_client, random_state=random_state, seed=seed)
         else:
             return MultitaskDCModelWrapper(params, featurizer, ds_client, random_state=random_state, seed=seed)
@@ -367,6 +370,7 @@ class ModelWrapper(object):
         """
         # TODO: Just a warning, we may have response transformers for classification datasets in the future
         if self.params.prediction_type=='regression' and self.params.transformers is True:
+            log.debug("Creating output transformers")
             return [trans.NormalizationTransformerMissingData(transform_y=True, dataset=dataset)]
         else:
             return []
@@ -409,6 +413,8 @@ class ModelWrapper(object):
                 transformers_w (dict of lists): Same as transformers, but stores the transformers on the weights
 
         """
+        log.debug("Creating transformers...")
+
         total_transformers = 0
         for k, td in training_datasets.items():
             self.transformers[k] = self._create_output_transformers(td)
@@ -418,7 +424,14 @@ class ModelWrapper(object):
             # Set up transformers for weights, if needed
             self.transformers_w[k] = trans.create_weight_transformers(self.params, td)
 
+            # TODO: should this be +=
             total_transformers = len(self.transformers[k]) + len(self.transformers_x[k]) + len(self.transformers_w[k])
+
+            log.debug(f"transformers[{k}] = {self.transformers[k]}")
+            log.debug(f"transformers_x[{k}] = {self.transformers_x[k]}")
+            log.debug(f"transformers_w[{k}] = {self.transformers_w[k]}")
+
+        log.debug(f"Total transformers: {total_transformers}")
 
         if total_transformers > 0:
             # Transformers are no longer saved as separate datastore objects; they are included in the model tarball
@@ -504,15 +517,18 @@ class ModelWrapper(object):
         if len(self.transformers[fold]) > 0:
             self.log.info("Transforming response data")
             for transformer in self.transformers[fold]:
+                self.log.debug(f"Transformer: {transformer}")
                 transformed_dataset = transformer.transform(transformed_dataset)
         if len(self.transformers_x[fold]) > 0:
             self.log.info("Transforming feature data")
             for transformer in self.transformers_x[fold]:
                 transformed_dataset = transformer.transform(transformed_dataset)
+                self.log.debug(f"Transformer: {transformer}")
         if len(self.transformers_w[fold]) > 0:
             self.log.info("Transforming weights")
             for transformer in self.transformers_w[fold]:
                 transformed_dataset = transformer.transform(transformed_dataset)
+                self.log.debug(f"Transformer: {transformer}")
 
         return transformed_dataset
         # ****************************************************************************************
@@ -903,7 +919,7 @@ class NNModelWrapper(ModelWrapper):
         if num_folds > 1:
             self.train_kfold_cv(pipeline)
         else:
-            logging.debug("model wrapper calling training_with_early_stopping")
+            log.debug("model wrapper calling training_with_early_stopping")
             self.train_with_early_stopping(pipeline)
 
     # ****************************************************************************************
@@ -957,10 +973,22 @@ class NNModelWrapper(ModelWrapper):
             test_perf_data = perf.create_perf_data(self.params.prediction_type, pipeline.data, 'test')
             for k in range(num_folds):
                 self.model = models[k]
+                log.debug(f"Model is: {self.model}")
+
+                if isinstance(train_dset, DiskDataset):
+                    log.debug(f"untransformed train_dset: {train_dset} ({train_dset.data_dir})")
+                    log.debug(f"untransformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
+                    log.debug(f"untransformed test_dset: {test_dset} ({test_dset.data_dir})")
+
                 train_dset, valid_dset = pipeline.data.train_valid_dsets[k]
                 train_dset = self.transform_dataset(train_dset, fold=k)
                 valid_dset = self.transform_dataset(valid_dset, fold=k)
                 test_dset = self.transform_dataset(pipeline.data.test_dset, fold=k)
+
+                if isinstance(train_dset, DiskDataset):
+                    log.debug(f"transformed train_dset: {train_dset} ({train_dset.data_dir})")
+                    log.debug(f"transformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
+                    log.debug(f"transformed test_dset: {test_dset} ({test_dset.data_dir})")
 
                 # We turn off automatic checkpointing - we only want to save a checkpoints for the final model.
                 self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0, restore=False)
@@ -1059,10 +1087,24 @@ class NNModelWrapper(ModelWrapper):
         em.set_make_pred(make_pred)
         em.on_new_best_valid(lambda : self.model.save_checkpoint())
 
+        log.debug(f"Model is: {self.model}")
+
         train_dset, valid_dset = pipeline.data.train_valid_dsets[0]
+
+        if isinstance(train_dset, DiskDataset):
+            log.debug(f"untransformed train_dset: {train_dset} ({train_dset.data_dir})")
+            log.debug(f"untransformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
+            log.debug(f"untransformed test_dset: {pipeline.data.test_dset} ({pipeline.data.test_dset.data_dir})")
+
         train_dset = self.transform_dataset(train_dset, 'final')
         valid_dset = self.transform_dataset(valid_dset, 'final')
         test_dset = self.transform_dataset(pipeline.data.test_dset, 'final')
+
+        if isinstance(train_dset, DiskDataset):
+            log.debug(f"transformed train_dset: {train_dset} ({train_dset.data_dir})")
+            log.debug(f"transformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
+            log.debug(f"transformed test_dset: {test_dset} ({test_dset.data_dir})")
+
         for ei in LCTimerIterator(self.params, pipeline, self.log):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
@@ -1667,6 +1709,7 @@ class HybridModelWrapper(NNModelWrapper):
         """
         # TODO: Just a warning, we may have response transformers for classification datasets in the future
         if self.params.prediction_type=='regression' and self.params.transformers is True:
+            log.debug("Creating output transformers")
             return [trans.NormalizationTransformerHybrid(transform_y=True, dataset=dataset)]
         else:
             return []

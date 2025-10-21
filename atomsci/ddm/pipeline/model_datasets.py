@@ -445,6 +445,7 @@ class ModelDataset(object):
                 # TODO: clean this up at the end
             dataset_location = os.path.join(self.disk_dataset_root, "dataset")
             self.log.debug(f"Creating diskdataset: {dataset_location}")
+            # TODO: can we use deepchem.data.CSVLoader instead...
             self.dataset = DiskDataset.create_dataset(
                 self.shard_generator(params), data_dir=dataset_location
             )

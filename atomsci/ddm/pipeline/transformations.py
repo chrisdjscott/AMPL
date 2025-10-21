@@ -91,6 +91,7 @@ def create_feature_transformers(params, featurization, train_dset):
         # response_transform_type and feature_transform_type, rather than params.transformers.
 
         # Scale and center feature matrix if featurization type calls for it
+        log.debug("Creating feature transformer...")
         transformers_x = featurization.create_feature_transformer(train_dset)
     else:
         transformers_x = []
@@ -185,16 +186,20 @@ def get_all_training_datasets(model_dataset):
         dict of dc.Datasets: A dictionary keyed using keys fold numbers and 'final'. Contains
         the training data for each fold and the final training+validation training set.
     """
+    log.debug("In transformations.get_all_training_datasets...")
+
     result = {}
     if model_dataset.splitting is None:
         # this dataset is not split into training and validation, use all data
         result['final'] = model_dataset.dataset
+        log.debug("Setting final to model_dataset.dataset")
     elif len(model_dataset.train_valid_dsets)==1:
         # there is only one fold, use the training set from that
         # for random forests and xgboost models, the final and
         # 0th fold are the same if there k-fold is not used
         result['final'] = model_dataset.train_valid_dsets[0][0]
         result[0] = model_dataset.train_valid_dsets[0][0]
+        log.debug("Setting final to only train_valid_dset")
     else:
         # First, get the training set from all the folds
         for i, (t, v) in enumerate(model_dataset.train_valid_dsets):
@@ -202,6 +207,7 @@ def get_all_training_datasets(model_dataset):
 
         # Next, add the dataset that contains all training+validation data
         result['final'] = model_dataset.combined_training_data()
+        log.debug("Setting final to combined_training_data")
 
     return result
 
@@ -274,6 +280,12 @@ class NormalizationTransformerMissingData(NormalizationTransformer):
                  transform_w=False,
                  dataset=None,
                  move_mean=True) :
+
+        log.debug("NormalizationTransformerMissingData init...")
+        log.debug(f"transform_X = {transform_X}")
+        log.debug(f"transform_y = {transform_y}")
+        log.debug(f"transform_w = {transform_w}")
+        log.debug(f"move_mean = {move_mean}")
 
         if transform_X :
             X_means, X_stds = dataset.get_statistics(X_stats=True, y_stats=False)
@@ -366,6 +378,8 @@ class NormalizationTransformerHybrid(NormalizationTransformer):
                  transform_w=False,
                  dataset=None,
                  move_mean=True) :
+
+        log.debug(f"NormalizationTransformerHybrid constructor... transform_X={transform_X}, transform_Y={transform_Y}, transform_w={transform_w}, move_mean={move_mean}")
 
         if transform_X :
             X_means, X_stds = dataset.get_statistics(X_stats=True, y_stats=False)

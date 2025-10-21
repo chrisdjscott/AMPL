@@ -550,7 +550,11 @@ class TrainValidTestSplitting(Splitting):
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
 
             log.debug(f"train {train}; valid {valid}; test {test}")
-            if isinstance(train, DiskDataset):
+            if isinstance(dataset, DiskDataset):
+                orig_dataset_dir = dataset.data_dir
+                train.move(orig_dataset_dir + "-train")
+                valid.move(orig_dataset_dir + "-valid")
+                test.move(orig_dataset_dir + "-test")
                 log.debug(f"train dir: {train.data_dir}")
                 log.debug(f"valid dir: {valid.data_dir}")
                 log.debug(f"test dir: {test.data_dir}")
