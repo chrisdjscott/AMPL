@@ -1121,6 +1121,12 @@ class NNModelWrapper(ModelWrapper):
         log.debug(f"Test prediction IDs would be: {train_dset.ids[:10]}")
         log.debug(f"Test prediction: {test_pred}")
 
+        # shuffle the train dataset
+#        if self.params.use_disk_dataset and train_dset.get_number_shards() > 1:
+#            log.debug("Shuffling dataset first")
+#            train_dset = train_dset.complete_shuffle(train_dset.data_dir + "-shuffled")
+
+        log.debug("Start of epoch training loop...")
         for ei in LCTimerIterator(self.params, pipeline, self.log):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
