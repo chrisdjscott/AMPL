@@ -1091,7 +1091,10 @@ class NNModelWrapper(ModelWrapper):
 
         train_dset, valid_dset = pipeline.data.train_valid_dsets[0]
 
-        if isinstance(train_dset, DiskDataset):
+        if self.params.use_disk_dataset:
+            train_dataset_path = train_dset.data_dir
+            valid_dataset_path = valid_dset.data_dir
+            test_dataset_path = pipeline.data.test_dset.data_dir
             log.debug(f"untransformed train_dset: {train_dset} ({train_dset.data_dir})")
             log.debug(f"untransformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
             log.debug(f"untransformed test_dset: {pipeline.data.test_dset} ({pipeline.data.test_dset.data_dir})")
@@ -1100,7 +1103,10 @@ class NNModelWrapper(ModelWrapper):
         valid_dset = self.transform_dataset(valid_dset, 'final')
         test_dset = self.transform_dataset(pipeline.data.test_dset, 'final')
 
-        if isinstance(train_dset, DiskDataset):
+        if self.params.use_disk_dataset:
+            train_dset.move(train_dataset_path + "-transformed")
+            valid_dset.move(valid_dataset_path + "-transformed")
+            test_dset.move(test_dataset_path + "-transformed")
             log.debug(f"transformed train_dset: {train_dset} ({train_dset.data_dir})")
             log.debug(f"transformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
             log.debug(f"transformed test_dset: {test_dset} ({test_dset.data_dir})")
@@ -1109,6 +1115,7 @@ class NNModelWrapper(ModelWrapper):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
             self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0)
+            log.debug("Model wrapper call EpochManager.update_epoch...")
             train_perf, valid_perf, test_perf = em.update_epoch(ei,
                                 train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset)
 

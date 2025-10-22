@@ -551,10 +551,6 @@ class TrainValidTestSplitting(Splitting):
 
             log.debug(f"train {train}; valid {valid}; test {test}")
             if isinstance(dataset, DiskDataset):
-                orig_dataset_dir = dataset.data_dir
-                train.move(orig_dataset_dir + "-train")
-                valid.move(orig_dataset_dir + "-valid")
-                test.move(orig_dataset_dir + "-test")
                 log.debug(f"train dir: {train.data_dir}")
                 log.debug(f"valid dir: {valid.data_dir}")
                 log.debug(f"test dir: {test.data_dir}")
@@ -563,6 +559,15 @@ class TrainValidTestSplitting(Splitting):
         train, train_attr = dm.expand_selection(train.ids)
         valid, valid_attr = dm.expand_selection(valid.ids)
         test, test_attr = dm.expand_selection(test.ids)
+
+        if isinstance(dataset, DiskDataset):
+            orig_dataset_dir = dataset.data_dir
+            train.move(orig_dataset_dir + "-train")
+            valid.move(orig_dataset_dir + "-valid")
+            test.move(orig_dataset_dir + "-test")
+            log.debug(f"train dir after expand: {train.data_dir}")
+            log.debug(f"valid dir after expand: {valid.data_dir}")
+            log.debug(f"test dir after expand: {test.data_dir}")
 
         # Note grouping of train/valid return values as tuple lists, to match format of 
         # KFoldSplitting.split_dataset().
