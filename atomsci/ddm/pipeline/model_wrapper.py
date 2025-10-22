@@ -1111,6 +1111,16 @@ class NNModelWrapper(ModelWrapper):
             log.debug(f"transformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
             log.debug(f"transformed test_dset: {test_dset} ({test_dset.data_dir})")
 
+        # In model_wrapper.py, train_with_early_stopping()
+        log.debug(f"Train dataset IDs (first 10): {train_dset.ids[:10]}")
+        log.debug(f"Train dataset shape: {train_dset.X.shape}")
+
+        # Make a test prediction
+        test_pred = self.model.predict(train_dset, self.transformers['final'])
+        log.debug(f"Test prediction shape: {test_pred.shape}")
+        log.debug(f"Test prediction IDs would be: {train_dset.ids[:10]}")
+        log.debug(f"Test prediction: {test_pred}")
+
         for ei in LCTimerIterator(self.params, pipeline, self.log):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
