@@ -1345,8 +1345,8 @@ class SimpleRegressionPerfData(RegressionPerfData):
         self.model_score = None
 
         self.real_vals = model_dataset.get_untransformed_responses(dataset.ids)
-        log.debug(f"Real vals: {self.real_vals}")
-        log.debug(f"Real vals info: {np.info(self.real_vals)}")
+#        log.debug(f"Real vals: {self.real_vals}")
+#        log.debug(f"Real vals info: {np.info(self.real_vals)}")
 
 
     # ****************************************************************************************
@@ -1366,8 +1366,8 @@ class SimpleRegressionPerfData(RegressionPerfData):
             Reshapes the predicted values and the standard deviations (if they are given)
 
         """
-        log.debug("In accumalate_preds...")
-        log.debug(f"predicted_vals: {np.info(predicted_vals)}")
+#        log.debug("In accumalate_preds...")
+#        log.debug(f"predicted_vals: {np.info(predicted_vals)}")
 
         self.pred_vals = self._reshape_preds(predicted_vals)
         if pred_stds is not None:
@@ -1375,11 +1375,11 @@ class SimpleRegressionPerfData(RegressionPerfData):
         pred_vals = self.pred_vals
         real_vals = self.get_real_values(ids=ids)
         weights = self.get_weights(ids)
-        log.debug(f"weights: {weights} {weights.shape}")
+#        log.debug(f"weights: {weights} {weights.shape}")
         scores = []
         for i in range(self.num_tasks):
             nzrows = np.where(weights[:,i] != 0)[0]
-            log.debug(f"len nzrows: {len(nzrows)}")
+#            log.debug(f"len nzrows: {len(nzrows)}")
             task_real_vals = np.squeeze(real_vals[nzrows,i])
             task_pred_vals = np.squeeze(pred_vals[nzrows,i])
             scores.append(r2_score(task_real_vals, task_pred_vals))
@@ -2079,16 +2079,16 @@ class EpochManager:
         Returns:
            float: Performance metric for the given dset.
         """
-        log.debug(f"In EpochManager.accumulate for {subset}...")
-        if isinstance(dset, DiskDataset):
-            log.debug(f"Dataset path is: {dset.data_dir}")
+#        log.debug(f"In EpochManager.accumulate for {subset}...")
+#        if isinstance(dset, DiskDataset):
+#            log.debug(f"Dataset path is: {dset.data_dir}")
         pred = self._make_pred(dset)
-        log.debug(f"Pred: {pred}")
-        log.debug(f"type of pred: {type(pred)}")
-        log.debug(f"Type of PerfData: {type(getattr(self.wrapper, f'{subset}_perf_data')[ei])}")
-        log.debug("calling accumulate_preds on perf data object...")
+#        log.debug(f"Pred: {pred}")
+#        log.debug(f"type of pred: {type(pred)}")
+#        log.debug(f"Type of PerfData: {type(getattr(self.wrapper, f'{subset}_perf_data')[ei])}")
+#        log.debug("calling accumulate_preds on perf data object...")
         perf = getattr(self.wrapper, f'{subset}_perf_data')[ei].accumulate_preds(pred, dset.ids)
-        log.debug(f"Returning perf: {perf}")
+#        log.debug(f"Returning perf: {perf}")
         return perf
 
     # ****************************************************************************************
@@ -2163,9 +2163,9 @@ class EpochManager:
            perf (float): the performance of the given dset.
 
         """
-        log.debug(f"EpochManager.update called with subset: {subset}")
-        if isinstance(dset, DiskDataset):
-            log.debug(f"Dset: {dset} ({dset.data_dir})")
+#        log.debug(f"EpochManager.update called with subset: {subset}")
+#        if isinstance(dset, DiskDataset):
+#            log.debug(f"Dset: {dset} ({dset.data_dir})")
 
         if dset is None:
             return None

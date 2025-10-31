@@ -32,6 +32,7 @@ from atomsci.ddm.pipeline import model_tracker as trkr
 from atomsci.ddm.pipeline import transformations as trans
 from atomsci.ddm.pipeline import random_seed as rs
 from atomsci.ddm.pipeline import sampling as sample
+from atomsci.ddm.pipeline.utils import get_memory_usage
 
 logging.basicConfig(format='%(asctime)-15s %(message)s')
 
@@ -306,6 +307,7 @@ class ModelPipeline:
         self.log.debug(f"created: {self.data}")
         self.log.debug("calling get_featurized_data...")
         self.data.get_featurized_data(params)
+        self.log.debug(f"Memory usage after calling data.get_featurized_data: {get_memory_usage():.3f} GiB")
 
         if self.run_mode == 'training':
             # Ignore prevoiusly split if in production mode
@@ -327,6 +329,8 @@ class ModelPipeline:
                 self.save_split_metadata()
             if self.data.params.prediction_type == 'classification':
                 self.data._validate_classification_dataset()
+
+        self.log.debug(f"Memory usage after splitting the dataset: {get_memory_usage():.3f} GiB")
 
         # apply sampling before fitting transformers
         if self.run_mode == 'training':
@@ -652,6 +656,7 @@ class ModelPipeline:
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
         self.log.debug("Start of train model...")
+        self.log.debug(f"Memory usage at start of train model is: {get_memory_usage():.3f} GiB")
 
         self.run_mode = 'training'
         if self.params.model_type == "hybrid":
@@ -670,7 +675,11 @@ class ModelPipeline:
             self.model_wrapper.setup_model_dirs()
             self.log.debug(f"Created model wrapper: {self.model_wrapper}")
 
+        self.log.debug(f"Memory usage prior to calling load_featurize_data: {get_memory_usage():.3f} GiB")
+
         self.load_featurize_data()
+
+        self.log.debug(f"Memory usage after calling load_featurize_data: {get_memory_usage():.3f} GiB")
 
         ## return if split only
         if self.params.split_only:
@@ -678,6 +687,8 @@ class ModelPipeline:
 
         self.log.debug("calling model_wrapper.train")
         self.model_wrapper.train(self)
+
+        self.log.debug(f"Memory usage after calling model_wrapper.train: {get_memory_usage():.3f} GiB")
 
         # Create the metadata for the trained model
         self.create_model_metadata()

@@ -50,6 +50,7 @@ from atomsci.ddm.pipeline import model_datasets as md
 from atomsci.ddm.pipeline import transformations as trans
 from atomsci.ddm.pipeline import perf_data as perf
 import atomsci.ddm.pipeline.parameter_parser as pp
+from atomsci.ddm.pipeline.utils import get_memory_usage
 
 from tensorflow.python.keras.utils.layer_utils import count_params
 
@@ -1076,6 +1077,8 @@ class NNModelWrapper(ModelWrapper):
 
                 valid_epoch_perfs (np.array): A standard validation set performance metric (r2_score or roc_auc), at the end of each epoch.
         """
+        log.debug(f"Memory usage at beginning of NNModelWrapper.train_with_early_stopping: {get_memory_usage():.3f} GiB")
+
         self.data = pipeline.data
 
         em = perf.EpochManager(self,
@@ -1086,6 +1089,8 @@ class NNModelWrapper(ModelWrapper):
             return self.model.predict(dset, self.transformers['final'])
         em.set_make_pred(make_pred)
         em.on_new_best_valid(lambda : self.model.save_checkpoint())
+
+        log.debug(f"Memory usage after creating EpochManager: {get_memory_usage():.3f} GiB")
 
         log.debug(f"Model is: {self.model}")
 
@@ -1104,22 +1109,23 @@ class NNModelWrapper(ModelWrapper):
         test_dset = self.transform_dataset(pipeline.data.test_dset, 'final')
 
         if self.params.use_disk_dataset:
-            train_dset.move(train_dataset_path + "-transformed")
-            valid_dset.move(valid_dataset_path + "-transformed")
-            test_dset.move(test_dataset_path + "-transformed")
+            train_dset.move(train_dataset_path)
+            valid_dset.move(valid_dataset_path)
+            test_dset.move(test_dataset_path)
             log.debug(f"transformed train_dset: {train_dset} ({train_dset.data_dir})")
             log.debug(f"transformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
             log.debug(f"transformed test_dset: {test_dset} ({test_dset.data_dir})")
 
-        # In model_wrapper.py, train_with_early_stopping()
-        log.debug(f"Train dataset IDs (first 10): {train_dset.ids[:10]}")
-        log.debug(f"Train dataset shape: {train_dset.X.shape}")
-
-        # Make a test prediction
-        test_pred = self.model.predict(train_dset, self.transformers['final'])
-        log.debug(f"Test prediction shape: {test_pred.shape}")
-        log.debug(f"Test prediction IDs would be: {train_dset.ids[:10]}")
-        log.debug(f"Test prediction: {test_pred}")
+        log.debug(f"Memory usage after transforming datasets: {get_memory_usage():.3f} GiB")
+#        # In model_wrapper.py, train_with_early_stopping()
+#        log.debug(f"Train dataset IDs (first 10): {train_dset.ids[:10]}")
+#        log.debug(f"Train dataset shape: {train_dset.X.shape}")
+#
+#        # Make a test prediction
+#        test_pred = self.model.predict(train_dset, self.transformers['final'])
+#        log.debug(f"Test prediction shape: {test_pred.shape}")
+#        log.debug(f"Test prediction IDs would be: {train_dset.ids[:10]}")
+#        log.debug(f"Test prediction: {test_pred}")
 
         # shuffle the train dataset
 #        if self.params.use_disk_dataset and train_dset.get_number_shards() > 1:
@@ -1131,9 +1137,10 @@ class NNModelWrapper(ModelWrapper):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
             self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0)
-            log.debug("Model wrapper call EpochManager.update_epoch...")
+            self.log.debug(f"Memory usage after calling model.fit (epoch {ei}): {get_memory_usage():.3f} GiB")
             train_perf, valid_perf, test_perf = em.update_epoch(ei,
                                 train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset)
+            self.log.debug(f"Memory usage after calling em.update_epoch (epoch {ei}): {get_memory_usage():.3f} GiB")
 
             self.log.info("Epoch %d: training %s = %.3f, validation %s = %.3f, test %s = %.3f" % (
                           ei, pipeline.metric_type, train_perf, pipeline.metric_type, valid_perf,

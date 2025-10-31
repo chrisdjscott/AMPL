@@ -12,6 +12,7 @@ import uuid
 from atomsci.ddm.pipeline import featurization as feat
 from atomsci.ddm.pipeline import splitting as split
 from atomsci.ddm.utils import datastore_functions as dsf
+from atomsci.ddm.pipeline.utils import get_memory_usage
 from pathlib import Path
 import getpass
 import sys
@@ -435,6 +436,7 @@ class ModelDataset(object):
         else:
             self.log.info("Creating new featurized dataset for dataset %s" % self.dataset_name)
 
+        self.log.debug(f"Memory usage before loading and featurising dataset: {get_memory_usage():.3f} GiB")
         if self.params.use_disk_dataset:
             self.log.info("Creating new sharded, featurized dataset for dataset %s" % self.dataset_name)
 
@@ -475,13 +477,15 @@ class ModelDataset(object):
         if len(self.dataset) < params.min_compound_number:
             self.log.info("Dataset of length %i is shorter than the recommended length %i" % (len(self.dataset), params.min_compound_number))
 
+        self.log.debug(f"Memory usage after loading and featurising dataset: {get_memory_usage():.3f} GiB")
+
     def shard_generator(self, params):
         """
         Generates shards for the DiskDataset
         """
         self.log.debug("start of shard_generator")
-        self.attr_list = []
-        self.vals_list = []
+        self.attr = None
+        self.vals = None
         dset_df_chunks = self.load_full_dataset()
         self.log.debug(f"Iterating over dset_df_chunks: {dset_df_chunks}")
         for chunki, dset_df in enumerate(dset_df_chunks):
@@ -499,20 +503,21 @@ class ModelDataset(object):
                 dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
                 sample_only = True
 
-            # TODO: need to check this function
             check_task_columns(params, dset_df)
 
             self.log.debug(f"calling featurize_data... {self.featurization}")
             featurise_time = time.time()
             features, ids, vals_tmp, attr_tmp, w, featurized_dset_df = self.featurization.featurize_data(dset_df, params, self.contains_responses)
-            self.attr_list.append(attr_tmp)
-            self.vals_list.append(vals_tmp)
+            if self.vals is None:
+                self.vals = vals_tmp
+                self.attr = attr_tmp
+            else:
+                self.vals = np.concatenate([self.vals, vals_tmp], axis=0)
+                self.attr = pd.concat([self.attr, attr_tmp])
             self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
             self.log.debug(f"type of self.attr: {type(attr_tmp)}; self.vals: {type(vals_tmp)}, {vals_tmp.dtype}")
             self.log.debug(f"self.attr: {attr_tmp.shape}, {attr_tmp.columns.tolist()}")
             self.log.debug(f"self.vals: {vals_tmp.shape}")
-            self.log.debug(f"self.attr:\n{attr_tmp}")
-            self.log.debug(f"self.attr.info:\n{attr_tmp.info()}")
 
             if not sample_only:
                 self.log.debug("Calling save_featurized_data...")
@@ -521,19 +526,11 @@ class ModelDataset(object):
             self.n_features = self.featurization.get_feature_count()
             self.log.debug("Number of features: " + str(self.n_features))
 
-            # TODO: need to check this function
             self.update_untransformed_responses(ids, vals_tmp)
 
-            yield features, vals_tmp, w, ids
+            self.log.debug(f"Memory usage after loading shard {chunki+1} data: {get_memory_usage():.3f} GiB")
 
-        # TODO: concat these in the loop above if they need to be stored in full...
-        self.log.debug(f"LEN attr_list {len(self.attr_list)}")
-        self.attr = pd.concat(self.attr_list)
-        self.attr_list = None
-        self.log.debug(f"Created full attr df: {self.attr.shape}, {self.attr.columns}")
-        self.vals = np.concatenate(self.vals_list, axis=0)
-        self.vals_list = None
-        self.log.debug(f"Created full vals array: {self.vals.shape}")
+            yield features, vals_tmp, w, ids
 
         self.log.debug("end of shard_generator")
 

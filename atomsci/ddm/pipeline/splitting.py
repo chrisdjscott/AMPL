@@ -2,6 +2,9 @@
 testing, generation of predicted values and performance metrics.
 """
 
+import sys
+import os
+import shutil
 import warnings
 import logging
 import copy
@@ -13,6 +16,7 @@ from atomsci.ddm.pipeline.ave_splitter import AVEMinSplitter
 from atomsci.ddm.pipeline.temporal_splitter import TemporalSplitter
 from atomsci.ddm.pipeline.MultitaskScaffoldSplit import MultitaskScaffoldSplitter
 from atomsci.ddm.utils.many_to_one import many_to_one_df
+from atomsci.ddm.pipeline.utils import get_memory_usage
 import collections
 
 logging.basicConfig(format='%(asctime)-15s %(message)s')
@@ -489,6 +493,9 @@ class TrainValidTestSplitting(Splitting):
         """
         log.info("Splitting data by %s" % self.params.splitter)
         log.debug(f"Needs smiles: {self.needs_smiles()}")
+        log.debug(f"Memory usage before creating DatasetManager: {get_memory_usage():.3f} GiB")
+        if self.params.use_disk_dataset:
+            orig_dataset_dir = dataset.data_dir
 
         # Duplicate SMILES and compound_ids are merged into single compounds
         # in DatasetManager. The first instance of each is kept. Assumes many to one 
@@ -498,7 +505,9 @@ class TrainValidTestSplitting(Splitting):
         # passed into the constructor
         dm = DatasetManager(dataset=dataset, attr_df=attr_df, smiles_col=smiles_col,
             needs_smiles=self.needs_smiles())
+        log.debug(f"Memory usage after creating DatasetManager: {get_memory_usage():.3f} GiB")
         dataset = dm.compact_dataset()
+        log.debug(f"Memory usage after calling dm.compact_dataset: {get_memory_usage():.3f} GiB")
 
         if self.split == 'butina':
             # Can't use train_test_split with Butina because Butina splits into train and valid sets only.
@@ -545,9 +554,11 @@ class TrainValidTestSplitting(Splitting):
                 seed=self.seed)
         else:
             log.debug("Doing train_valid_test_split...")
+            log.debug(f"Memory usage before calling splitter.train_valid_test_split: {get_memory_usage():.3f} GiB")
             train_frac = 1.0 - self.params.split_valid_frac - self.params.split_test_frac
             train, valid, test = self.splitter.train_valid_test_split(dataset, 
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
+            log.debug(f"Memory usage after calling splitter.train_valid_test_split: {get_memory_usage():.3f} GiB")
 
             log.debug(f"train {train}; valid {valid}; test {test}")
             if isinstance(dataset, DiskDataset):
@@ -559,9 +570,9 @@ class TrainValidTestSplitting(Splitting):
         train, train_attr = dm.expand_selection(train.ids)
         valid, valid_attr = dm.expand_selection(valid.ids)
         test, test_attr = dm.expand_selection(test.ids)
+        log.debug(f"Memory usage after calling dm.expand_selection: {get_memory_usage():.3f} GiB")
 
         if isinstance(dataset, DiskDataset):
-            orig_dataset_dir = dataset.data_dir
             train.move(orig_dataset_dir + "-train")
             valid.move(orig_dataset_dir + "-valid")
             test.move(orig_dataset_dir + "-test")
@@ -697,12 +708,14 @@ class DatasetManager:
 
             smiles_col (string): name of SMILES column (hack for now until deepchem fixes scaffold and butina splitters)
         """
+        self._dataset_path = None
         if isinstance(dataset, DiskDataset):
-            dataset_path = dataset.data_dir + "-copy"
-            self.dataset_ori = dataset.copy(dataset_path)
+            self._dataset_path = dataset.data_dir + "-copy"
+            self.dataset_ori = dataset.copy(self._dataset_path)
             log.debug(f"DatasetManager: copied disk dataset to: {self.dataset_ori.data_dir}")
         else:
             self.dataset_ori = copy.deepcopy(dataset)
+        log.debug(f"Memory usage after copying dataset in dm constructor: {get_memory_usage():.3f} GiB")
         self.attr_df = attr_df
         self.smiles_col = smiles_col
         self.needs_smiles = needs_smiles
@@ -733,9 +746,16 @@ class DatasetManager:
         self.w_cols = [f'w{c}' for c in range(ws.shape[1])]
         for i, col in enumerate(self.w_cols):
             self.id_df[col] = ws[:,i]
+        log.debug(f"Memory usage after building id_df in dm constructor: {get_memory_usage():.3f} GiB")
 
         # check many to one assumption.
         many_to_one_df(self.id_df, id_col='compound_id', smiles_col='smiles')
+
+    def __del__(self):
+        if self._dataset_path is not None:
+            if os.path.isdir(self._dataset_path):
+                log.debug(f"Cleaning up temporary dataset copy: {self._dataset_path}")
+                shutil.rmtree(self._dataset_path)
 
     def compact_dataset(self):
         """Returns a dataset with no duplicate compounds ids and smiles strings in the
