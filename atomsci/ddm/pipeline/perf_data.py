@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, confusion_matrix, average_precision_score, precision_score, recall_score
 from sklearn.metrics import accuracy_score, matthews_corrcoef, cohen_kappa_score, log_loss, balanced_accuracy_score
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from atomsci.ddm.pipeline.utils import get_memory_usage
 
 
 log = logging.getLogger("ATOM")
@@ -1345,6 +1346,7 @@ class SimpleRegressionPerfData(RegressionPerfData):
         self.model_score = None
 
         self.real_vals = model_dataset.get_untransformed_responses(dataset.ids)
+        log.debug(f"Size of self.real_vals on perf_data = {self.real_vals.nbytes} B")
 #        log.debug(f"Real vals: {self.real_vals}")
 #        log.debug(f"Real vals info: {np.info(self.real_vals)}")
 
@@ -2004,6 +2006,7 @@ class EpochManager:
         self.wrapper.model_choice_scores = np.zeros(params.max_epochs)
         self.wrapper.early_stopping_min_improvement = params.early_stopping_min_improvement
         self.wrapper.early_stopping_patience = params.early_stopping_patience
+        log.debug(f"Memory usage after allocating arrays in EpochManager: {get_memory_usage():.3f} GiB")
 
         self.wrapper.train_perf_data = []
         self.wrapper.valid_perf_data = []
@@ -2016,6 +2019,7 @@ class EpochManager:
                 create_perf_data(subset=self._subsets['valid'], **kwargs))
             self.wrapper.test_perf_data.append(
                 create_perf_data(subset=self._subsets['test'], **kwargs))
+        log.debug(f"Memory usage after creating perf data in EpochManager: {get_memory_usage():.3f} GiB")
 
     # ****************************************************************************************
     # class EpochManager

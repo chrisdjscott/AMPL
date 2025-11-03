@@ -1060,7 +1060,7 @@ def get_parser():
     parser.set_defaults(use_disk_dataset=False)
     parser.add_argument(
         '--disk_dataset_root', dest='disk_dataset_root', default=None, type=str,
-        help='Root directory for storing disk datasets under (defaults to temporary directories is not specified)'
+        help='Root directory for storing disk datasets under (defaults to temporary directories if not specified)'
     )
     parser.add_argument(
         '--shard_size', dest='shard_size', type=int, default=10000,

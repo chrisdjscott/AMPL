@@ -2,7 +2,7 @@
 testing, generation of predicted values and performance metrics.
 """
 
-import sys
+import time
 import os
 import shutil
 import warnings
@@ -503,10 +503,14 @@ class TrainValidTestSplitting(Splitting):
         # SMILES depending on the call to self.needs_smiles(). Later expand_selection
         # will expect SMILES or compound_ids in dataset.ids depending on needs_smiles
         # passed into the constructor
+        tick = time.time()
         dm = DatasetManager(dataset=dataset, attr_df=attr_df, smiles_col=smiles_col,
             needs_smiles=self.needs_smiles())
+        log.debug(f"Time to create DatasetManager: {time.time() - tick} s")
         log.debug(f"Memory usage after creating DatasetManager: {get_memory_usage():.3f} GiB")
+        tick = time.time()
         dataset = dm.compact_dataset()
+        log.debug(f"Time to compact dataset: {time.time() - tick} s")
         log.debug(f"Memory usage after calling dm.compact_dataset: {get_memory_usage():.3f} GiB")
 
         if self.split == 'butina':
@@ -556,8 +560,10 @@ class TrainValidTestSplitting(Splitting):
             log.debug("Doing train_valid_test_split...")
             log.debug(f"Memory usage before calling splitter.train_valid_test_split: {get_memory_usage():.3f} GiB")
             train_frac = 1.0 - self.params.split_valid_frac - self.params.split_test_frac
+            tick = time.time()
             train, valid, test = self.splitter.train_valid_test_split(dataset, 
                 frac_train=train_frac, frac_valid=self.params.split_valid_frac, frac_test=self.params.split_test_frac, seed=self.seed)
+            log.debug(f"Time to call splitter.train_valid_test_split: {time.time() - tick} s")
             log.debug(f"Memory usage after calling splitter.train_valid_test_split: {get_memory_usage():.3f} GiB")
 
             log.debug(f"train {train}; valid {valid}; test {test}")
@@ -567,9 +573,11 @@ class TrainValidTestSplitting(Splitting):
                 log.debug(f"test dir: {test.data_dir}")
 
         # After splitting unique compound_ids or SMILES are expanded 
+        tick = time.time()
         train, train_attr = dm.expand_selection(train.ids)
         valid, valid_attr = dm.expand_selection(valid.ids)
         test, test_attr = dm.expand_selection(test.ids)
+        log.debug(f"Time to call expand selection: {time.time() - tick} s")
         log.debug(f"Memory usage after calling dm.expand_selection: {get_memory_usage():.3f} GiB")
 
         if isinstance(dataset, DiskDataset):

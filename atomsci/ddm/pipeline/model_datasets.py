@@ -320,6 +320,7 @@ class ModelDataset(object):
             featurization: Featurization object; will be created if necessary based on params
 
         """
+        self._disk_dataset_root = None
         self.params = params
         self.log = logging.getLogger('ATOM')
         self.dataset_name = self.params.dataset_name
