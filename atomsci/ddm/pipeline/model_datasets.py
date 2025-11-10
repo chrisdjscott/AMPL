@@ -6,6 +6,7 @@ import time
 import tempfile
 import shutil
 from deepchem.data import NumpyDataset, DiskDataset
+from deepchem.feat.mol_graphs import ConvMol
 import numpy as np
 import pandas as pd
 import uuid
@@ -1730,3 +1731,60 @@ class ClassificationDataException(Exception):
     """
 
     pass
+
+
+# ****************************************************************************************
+# NOTE: fixing this by patching deepchem instead of here, in order for the fix here to
+#       work, we'd have to modify other functions, e.g. select, etc to return this class
+#       instead of DiskDataset
+class DiskDatasetFixedCaching(DiskDataset):
+    """
+    DeepChem DiskDataset does not correctly calculate the size of each shard when deciding
+    whether or not to cache the shards and you are using ConvMol features. This implementation
+    gives a better estimate of the shard size in this case.
+
+    """
+    def get_shard(self, i: int):
+        """
+        Checks cache and clears if too large.
+
+        """
+        batch = super().get_shard(i)
+
+        log = logging.getLogger('ATOM')
+        log.debug("Correcting DiskDataset caching...")
+
+        if self._cached_shards is not None:
+            shard = self._cached_shards[i]
+            if shard is not None:
+                # this gives us the upstream shard size calculation so far
+                # now we get a better estimate of the true shard size in the case of ConvMol features
+                if len(shard.X) > 0 and type(shard.X[0]) is ConvMol:
+                    # take the size of the first element, i.e. assume all elements the same (probably a good enough estimate)
+                    # only consider the atom_features array, there are other objects in ConvMol too but assume atom_features is the biggest
+                    shard_size_extra = shard.X[0].atom_features.nbytes * shard.X.size
+                    log.debug(f"Estimated additional {shard_size_extra} bytes in shard {i} feature array")
+
+                    if self._cache_used + shard_size_extra > self._memory_cache_size:
+                        # remove from memory
+                        self._cached_shards[i] = None
+
+                        # updating self._cache_used to remove this cache
+                        self._cache_used -= (shard.X.nbytes + shard.ids.nbytes)
+                        if shard.y is not None:
+                            self._cache_used -= shard.y.nbytes
+                        if shard.w is not None:
+                            self._cache_used -= shard.w.nbytes
+                        if self._cache_used < 0:
+                            self._cache_used = 0
+
+                        log.debug(f"Removing shard {i} from cache (remaining cache used = {self._cache_used} / {self._memory_cache_size} bytes)")
+
+                    else:
+                        # keep in memory but update the amount of memory used
+                        self._cache_used += shard_size_extra
+                        log.debug(f"Shard fits in memory; total cache memory used: {self._cache_used} bytes")
+                else:
+                    shard_size_extra = 0
+
+        return batch
