@@ -53,6 +53,9 @@ def create_splitting(params, random_state=None, seed=None):
     elif params.split_strategy == 'train_valid_test':
         log.debug("Creating TrainValidTestSplitting object...")
         return TrainValidTestSplitting(params, random_state=random_state, seed=seed)
+    elif params.split_strategy == 'simple_train_valid_test':
+        log.debug("Creating SimpleTrainValidTestSplitting object...")
+        return SimpleTrainValidTestSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'k_fold_cv':
         log.debug("Creating KFoldSplitting object...")
         return KFoldSplitting(params, random_state=random_state, seed=seed)
@@ -594,6 +597,95 @@ class TrainValidTestSplitting(Splitting):
 
 # ****************************************************************************************
 
+class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
+    def split_dataset(self, dataset, attr_df, smiles_col):
+        """
+        Very basic splitter to improve performance on very large disk datasets.
+
+        Assumes the rows in the input CSV file that the dataset was created from were
+        randomly shuffled, e.g. using the `shuf` command.
+
+        Just takes the first train_fraction for train dataset, next valid_fraction for
+        valid dataset, etc.
+
+        """
+        if not isinstance(dataset, DiskDataset):
+            raise ValueError("Shouldn't be using SimpleTrainValidTestSplitting with NumpyDatset -> use TrainValidTestSplitting instead")
+        log.debug("Start of simple splitter")
+        log.debug(f"self.split = {self.split}")
+
+        # TODO: may still need dataset manager and compact/expand???
+        # TODO: may want to reshard if needed to ensure even split
+
+        # create three new datasets
+        train_frac = 1.0 - self.params.split_valid_frac - self.params.split_test_frac
+        log.debug(f"Fractions: train {train_frac}; valid {self.params.split_valid_frac}; test {self.params.split_test_frac}")
+
+        total_len = len(dataset)
+        num_shards = dataset.get_number_shards()
+        log.debug(f"Length of full dataset: {total_len}")
+        log.debug(f"Num shards: {dataset.get_number_shards()}")
+        log.debug(f"Shard size: {dataset.get_shard_size()}")
+
+        test_num_shards = int(num_shards * self.params.split_test_frac)
+        valid_num_shards = int(num_shards * self.params.split_valid_frac)
+        train_num_shards = num_shards - test_num_shards - valid_num_shards
+        log.debug(f"Num shards split: train {train_num_shards}; valid {valid_num_shards}; test {test_num_shards}")
+
+        # create the train dataset
+        log.debug(f"Creating train dataset...")
+        tick = time.time()
+        shard_start = 0
+        shard_end = train_num_shards
+        log.debug(f"Shards: {range(shard_start, shard_end)}")
+        train = dataset.subset(
+            range(shard_start, shard_end),
+            subset_dir=dataset.data_dir + "-train",
+        )
+        attr_begin = 0
+        attr_end = len(train)
+        log.debug(f"attr range: {attr_begin}:{attr_end}")
+        train_attr = attr_df.iloc[attr_begin:attr_end, :]
+        log.debug(f"Created train dataset in {time.time() - tick} s")
+
+        # create the valid dataset
+        log.debug(f"Creating valid dataset...")
+        tick = time.time()
+        shard_start = shard_end
+        shard_end = shard_start + valid_num_shards
+        log.debug(f"Shards: {range(shard_start, shard_end)}")
+        valid = dataset.subset(
+            range(shard_start, shard_end),
+            subset_dir=dataset.data_dir + "-valid",
+        )
+        attr_begin = attr_end
+        attr_end = attr_begin + len(valid)
+        log.debug(f"attr range: {attr_begin}:{attr_end}")
+        valid_attr = attr_df.iloc[attr_begin:attr_end, :]
+        log.debug(f"Created valid dataset in {time.time() - tick} s")
+
+        # create the test dataset
+        log.debug(f"Creating test dataset...")
+        tick = time.time()
+        shard_start = shard_end
+        shard_end = shard_start + test_num_shards
+        log.debug(f"Shards: {range(shard_start, shard_end)}")
+        test = dataset.subset(
+            range(shard_start, shard_end),
+            subset_dir=dataset.data_dir + "-test",
+        )
+        attr_begin = attr_end
+        attr_end = attr_begin + len(test)
+        log.debug(f"attr range: {attr_begin}:{attr_end}")
+        test_attr = attr_df.iloc[attr_begin:attr_end, :]
+        log.debug(f"Created test dataset in {time.time() - tick} s")
+
+        log.debug("End of simple splitter")
+
+        return [(train, valid)], test, [(train_attr, valid_attr)], test_attr
+
+# ****************************************************************************************
+
 class ProductionSplitter(dc.splits.Splitter):
     def split(
             self, dataset, frac_train=1, frac_valid=1, frac_test=1, seed=None, log_every_n = None
@@ -762,7 +854,7 @@ class DatasetManager:
     def __del__(self):
         if self._dataset_path is not None:
             if os.path.isdir(self._dataset_path):
-                log.debug(f"Cleaning up temporary dataset copy: {self._dataset_path}")
+                log.debug(f"DatasetManager cleaning up temporary disk dataset copy: {self._dataset_path}")
                 shutil.rmtree(self._dataset_path)
 
     def compact_dataset(self):

@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import joblib
+import time
 
 import deepchem as dc
 from deepchem.data import DiskDataset
@@ -1134,6 +1135,8 @@ class NNModelWrapper(ModelWrapper):
 
         log.debug("Start of epoch training loop...")
         for ei in LCTimerIterator(self.params, pipeline, self.log):
+            tick = time.time()
+
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
             self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0)
@@ -1150,6 +1153,8 @@ class NNModelWrapper(ModelWrapper):
             # Compute performance metrics for each subset, and check if we've reached a new best validation set score
             if em.should_stop():
                 break
+
+            log.debug(f"Time for full train step: {time.time() - tick:.1f} s")
 
         # Revert to last checkpoint
         self.restore()

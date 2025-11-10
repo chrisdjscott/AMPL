@@ -1230,7 +1230,7 @@ def get_parser():
         help='Boolean flag for loading in previously split train, validation, and test csv files.')
     parser.set_defaults(previously_split=False)
     parser.add_argument(
-        '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv'],
+        '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv', 'simple_train_valid_test'],
         default='train_valid_test',
         help='Choice of splitting type between "k_fold_cv" for k fold cross validation and "train_valid_test" for a '
              'normal train/valid/test split. If split_test_frac or split_valid_frac are not set, "train_valid_test" '

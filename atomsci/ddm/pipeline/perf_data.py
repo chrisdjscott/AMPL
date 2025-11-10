@@ -103,7 +103,7 @@ def create_perf_data(prediction_type, model_dataset, subset, **kwargs):
     else:
         split_strategy = model_dataset.params.split_strategy
     if prediction_type == 'regression':
-        if subset == 'full' or split_strategy == 'train_valid_test':
+        if subset == 'full' or split_strategy == 'train_valid_test' or split_strategy == "simple_train_valid_test":
             # Called simple because no need to track compound IDs across multiple training folds
             return SimpleRegressionPerfData(model_dataset, subset, **kwargs)
         elif split_strategy == 'k_fold_cv':
