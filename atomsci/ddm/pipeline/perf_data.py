@@ -4,7 +4,11 @@
 and predictions
 """
 
+import os
 import logging
+from typing import Optional
+import tempfile
+from contextlib import contextmanager
 
 import deepchem as dc
 from deepchem.data import DiskDataset
@@ -16,6 +20,67 @@ from atomsci.ddm.pipeline.utils import get_memory_usage
 
 
 log = logging.getLogger("ATOM")
+
+
+# ******************************************************************************************************************************
+class LazyArray:
+    def __init__(self, array: np.ndarray, prefix: str = "lazyarray_", dir: Optional[str] = None):
+        """
+        Store array on disk and load it lazily when accessed
+
+        - array: the NumPy array to store
+        - prefix: prefix for the temporary file
+        - dir: optional directory for the file
+
+        """
+        log.debug(f"Creating LazyArray for array type {array.dtype} and shape {array.shape}")
+
+        # create a temporary file
+        fd, path = tempfile.mkstemp(prefix=prefix, suffix=".npy", dir=dir)
+        os.close(fd)  # we just need the filename
+
+        # decide whether to use pickle (compound ids can be np.object)
+        allow_pickle = array.dtype == object
+
+        # save to disk
+        np.save(path, array, allow_pickle=allow_pickle)
+
+        self._path = path
+        self._allow_pickle = allow_pickle
+
+    @contextmanager
+    def _load(self):
+        array = np.load(self._path, allow_pickle=self._allow_pickle)
+        try:
+            yield array
+        finally:
+            del array
+
+    def __getattr__(self, name):
+        with self._load() as arr:
+            # Delegate any unknown attributes to the actual numpy array
+            return getattr(arr, name)
+
+    def __getitem__(self, key):
+        with self._load() as arr:
+            return arr[key]
+
+    def __setitem__(self, key, value):
+        arr = np.load(self._path, self._allow_pickle)
+        arr[key] = value
+        np.save(self._path, arr, allow_pickle=self._allow_pickle)
+
+    def __array__(self):
+        """Allow use in NumPy operations that expect an ndarray."""
+        with self._load() as arr:
+            return np.array(arr)
+
+    def __del__(self):
+        """Remove the on-disk file."""
+        try:
+            os.remove(self._path)
+        except:
+            pass
 
 
 # ******************************************************************************************************************************
@@ -1325,6 +1390,8 @@ class SimpleRegressionPerfData(RegressionPerfData):
                real_vals (dict): The dictionary containing the origin response column values
 
         """
+        self._use_disk_dataset = model_dataset.params.use_disk_dataset
+
         self.subset = subset
         if subset == 'train':
             dataset = model_dataset.train_valid_dsets[0][0]
@@ -1338,17 +1405,21 @@ class SimpleRegressionPerfData(RegressionPerfData):
             raise ValueError('Unknown dataset subset type "%s"' % subset)
         self.num_cmpds = dataset.y.shape[0]
         self.num_tasks = dataset.y.shape[1]
-        self.weights = dataset.w
-        self.ids = dataset.ids
+        if self._use_disk_dataset:
+            self.weights = LazyArray(dataset.w)
+            self.ids = LazyArray(dataset.ids)
+        else:
+            self.weights = dataset.w
+            self.ids = dataset.ids
         self.pred_vals = None
         self.pred_stds = None
         self.perf_metrics = []
         self.model_score = None
 
-        self.real_vals = model_dataset.get_untransformed_responses(dataset.ids)
-        log.debug(f"Size of self.real_vals on perf_data = {self.real_vals.nbytes} B")
-#        log.debug(f"Real vals: {self.real_vals}")
-#        log.debug(f"Real vals info: {np.info(self.real_vals)}")
+        if self._use_disk_dataset:
+            self.real_vals = LazyArray(model_dataset.get_untransformed_responses(dataset.ids))
+        else:
+            self.real_vals = model_dataset.get_untransformed_responses(dataset.ids)
 
 
     # ****************************************************************************************
@@ -1368,24 +1439,23 @@ class SimpleRegressionPerfData(RegressionPerfData):
             Reshapes the predicted values and the standard deviations (if they are given)
 
         """
-#        log.debug("In accumalate_preds...")
-#        log.debug(f"predicted_vals: {np.info(predicted_vals)}")
-
         self.pred_vals = self._reshape_preds(predicted_vals)
         if pred_stds is not None:
             self.pred_stds = self._reshape_preds(pred_stds)
         pred_vals = self.pred_vals
         real_vals = self.get_real_values(ids=ids)
         weights = self.get_weights(ids)
-#        log.debug(f"weights: {weights} {weights.shape}")
         scores = []
         for i in range(self.num_tasks):
             nzrows = np.where(weights[:,i] != 0)[0]
-#            log.debug(f"len nzrows: {len(nzrows)}")
             task_real_vals = np.squeeze(real_vals[nzrows,i])
             task_pred_vals = np.squeeze(pred_vals[nzrows,i])
             scores.append(r2_score(task_real_vals, task_pred_vals))
         self.perf_metrics.append(np.array(scores))
+        if self._use_disk_dataset:
+            self.pred_vals = LazyArray(self.pred_vals)
+        else:
+            self.pred_vals = self.pred_vals
         return float(np.mean(scores))
 
 
