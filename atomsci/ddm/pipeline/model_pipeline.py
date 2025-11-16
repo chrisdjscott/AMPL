@@ -19,6 +19,11 @@ import pandas as pd
 import scipy as sp
 from sklearn.metrics import pairwise_distances
 import copy
+try:
+    import mlflow
+    MLFLOW_LOADED = True
+except:
+    MLFLOW_LOADED = False
 
 from atomsci.ddm.utils import datastore_functions as dsf
 import atomsci.ddm.utils.model_version_utils as mu
@@ -302,14 +307,19 @@ class ModelPipeline:
         """
         if params is None:
             params = self.params
-        self.log.debug("Calling create_model_dataset")
         self.data = model_datasets.create_model_dataset(params, self.featurization, self.ds_client)
-        self.log.debug(f"created: {self.data}")
-        self.log.debug("calling get_featurized_data...")
+        tick = time.time()
         self.data.get_featurized_data(params)
-        self.log.debug(f"Memory usage after calling data.get_featurized_data: {get_memory_usage():.3f} GiB")
+        tock = time.time() - tick
+        self.log.debug(f"Time to load and featurise the dataset: {tock} seconds")
+        self.log.debug(f"Memory usage after loading a featurising the dataset: {get_memory_usage():.3f} GiB")
+        if MLFLOW_LOADED:
+            mlflow.log_metric("dataset_load_featurise_time_seconds", tock)
+            mlflow.log_metric("memory_usage_after_load_featurise_gib", get_memory_usage())
 
         if self.run_mode == 'training':
+            tick = time.time()
+
             # Ignore prevoiusly split if in production mode
             if params.production:
                 # if in production mode, make a new split do not load
@@ -318,19 +328,20 @@ class ModelPipeline:
                     'Production split will not be saved.')
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
             elif not (params.previously_split and self.data.load_presplit_dataset(random_state=self.random_state, seed=self.seed)):
-                self.log.debug("Splitting dataset...")
                 self.data.split_dataset(random_state=self.random_state, seed=self.seed)
-                self.log.debug("Saving split dataset...")
                 self.data.save_split_dataset()
                 # write split metadata
-                self.log.debug("Creating split metadata...")
                 self.create_split_metadata()
-                self.log.debug("Saving split metadata...")
                 self.save_split_metadata()
             if self.data.params.prediction_type == 'classification':
                 self.data._validate_classification_dataset()
 
-        self.log.debug(f"Memory usage after splitting the dataset: {get_memory_usage():.3f} GiB")
+            tock = time.time() - tick
+            self.log.debug(f"Time to split the dataset: {tock} seconds")
+            self.log.debug(f"Memory usage after splitting the dataset: {get_memory_usage():.3f} GiB")
+            if MLFLOW_LOADED:
+                mlflow.log_metric("dataset_split_time_seconds", tock)
+                mlflow.log_metric("memory_usage_after_splitting_gib", get_memory_usage())
 
         # apply sampling before fitting transformers
         if self.run_mode == 'training':
@@ -655,65 +666,84 @@ class ModelPipeline:
 
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
-        self.log.debug("Start of train model...")
-        self.log.debug(f"Memory usage at start of train model is: {get_memory_usage():.3f} GiB")
+        if MLFLOW_LOADED:
+            mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+            mlflow.set_experiment(os.environ["MLFLOW_EXPERIMENT"])
+            mlflow.start_run()
+            mlflow_run = mlflow.active_run()
+            self.log.debug(f"mlflow run_id: {mlflow_run.info.run_id}; status: {mlflow_run.info.status}")
+            mlflow.set_tags({
+                "model_type": self.params.model_type,
+                "featurizer": self.params.featurizer,
+            })
 
-        self.run_mode = 'training'
-        if self.params.model_type == "hybrid":
-            if self.params.featurizer in ["graphconv"]:
-                raise Exception("Hybrid model doesn't support GraphConv featurizer now.")
-            if len(self.params.response_cols) < 2:
-                raise Exception("The dataset of a hybrid model should have two response columns, one for activities, one for concentrations.")
-        if featurization is None:
-            featurization = feat.create_featurization(self.params)
-        self.featurization = featurization
-        self.log.debug(f"featurisation: {self.featurization}")
+        try:
+            self.log.debug("Start of train model...")
+            self.log.debug(f"Memory usage at start of train model is: {get_memory_usage():.3f} GiB")
 
-        ## create model wrapper if not split_only
-        if not self.params.split_only:
-            self.model_wrapper = model_wrapper.create_model_wrapper(self.params, self.featurization, self.ds_client, random_state=self.random_state, seed=self.seed)
-            self.model_wrapper.setup_model_dirs()
-            self.log.debug(f"Created model wrapper: {self.model_wrapper}")
+            self.run_mode = 'training'
+            if self.params.model_type == "hybrid":
+                if self.params.featurizer in ["graphconv"]:
+                    raise Exception("Hybrid model doesn't support GraphConv featurizer now.")
+                if len(self.params.response_cols) < 2:
+                    raise Exception("The dataset of a hybrid model should have two response columns, one for activities, one for concentrations.")
+            if featurization is None:
+                featurization = feat.create_featurization(self.params)
+            self.featurization = featurization
+            self.log.debug(f"featurisation: {self.featurization}")
 
-        self.log.debug(f"Memory usage prior to calling load_featurize_data: {get_memory_usage():.3f} GiB")
+            ## create model wrapper if not split_only
+            if not self.params.split_only:
+                self.model_wrapper = model_wrapper.create_model_wrapper(self.params, self.featurization, self.ds_client, random_state=self.random_state, seed=self.seed)
+                self.model_wrapper.setup_model_dirs()
+                self.log.debug(f"Created model wrapper: {self.model_wrapper}")
 
-        self.load_featurize_data()
+            self.load_featurize_data()
 
-        self.log.debug(f"Memory usage after calling load_featurize_data: {get_memory_usage():.3f} GiB")
+            ## return if split only
+            if self.params.split_only:
+                return
 
-        ## return if split only
-        if self.params.split_only:
-            return
+            tick = time.time()
+            self.model_wrapper.train(self)
+            tock = time.time() - tick
+            self.log.debug(f"Time to train the model: {tock} seconds")
+            self.log.debug(f"Memory usage after calling model_wrapper.train: {get_memory_usage():.3f} GiB")
+            if MLFLOW_LOADED:
+                mlflow.log_metric("training_time_seconds", tock)
+                mlflow.log_metric("memory_usage_after_training_gib", get_memory_usage())
 
-        self.log.debug("calling model_wrapper.train")
-        self.model_wrapper.train(self)
+            # Create the metadata for the trained model
+            self.create_model_metadata()
+            # Save the performance metrics for each training data subset, for the best epoch
+            training_metrics = []
+            for label in ['best']:
+                for subset in ['train', 'valid', 'test']:
+                    training_dict = dict(
+                        metrics_type='training',
+                        label=label,
+                        subset=subset)
+                    training_dict['prediction_results'] = self.model_wrapper.get_pred_results(subset, label)
+                    training_metrics.append(training_dict)
 
-        self.log.debug(f"Memory usage after calling model_wrapper.train: {get_memory_usage():.3f} GiB")
+                    self.log.debug(f"End metrics: {training_dict}")
 
-        # Create the metadata for the trained model
-        self.create_model_metadata()
-        # Save the performance metrics for each training data subset, for the best epoch
-        training_metrics = []
-        for label in ['best']:
-            for subset in ['train', 'valid', 'test']:
-                training_dict = dict(
-                    metrics_type='training',
-                    label=label,
-                    subset=subset)
-                training_dict['prediction_results'] = self.model_wrapper.get_pred_results(subset, label)
-                training_metrics.append(training_dict)
+            # Save the model metrics separately
+            for training_dict in training_metrics:
+                training_dict['model_uuid'] = self.params.model_uuid
+                training_dict['time_run'] = time.time()
+                training_dict['input_dataset'] = self.model_metadata['training_dataset']
+            self.save_metrics(training_metrics)
+            self.log.debug(f"Full metrics: {training_metrics}")
 
-        # Save the model metrics separately
-        for training_dict in training_metrics:
-            training_dict['model_uuid'] = self.params.model_uuid
-            training_dict['time_run'] = time.time()
-            training_dict['input_dataset'] = self.model_metadata['training_dataset']
-        self.save_metrics(training_metrics)
+            # Save the model metadata in the model tracker or the filesystem
+            self.model_metadata['training_metrics'] = training_metrics
+            self.save_model_metadata()
+            self.orig_params = self.params
 
-        # Save the model metadata in the model tracker or the filesystem
-        self.model_metadata['training_metrics'] = training_metrics
-        self.save_model_metadata()
-        self.orig_params = self.params
+        finally:
+            if MLFLOW_LOADED:
+                mlflow.end_run()
 
 
     # ****************************************************************************************

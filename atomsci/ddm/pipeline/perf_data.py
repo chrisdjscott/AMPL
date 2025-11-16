@@ -33,8 +33,6 @@ class LazyArray:
         - dir: optional directory for the file
 
         """
-        log.debug(f"Creating LazyArray for array type {array.dtype} and shape {array.shape}")
-
         # create a temporary file
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=".npy", dir=dir)
         os.close(fd)  # we just need the filename

@@ -7,6 +7,11 @@ import shutil
 import joblib
 import time
 
+try:
+    import mlflow
+    MLFLOW_LOADED = True
+except:
+    MLFLOW_LOADED = False
 import deepchem as dc
 from deepchem.data import DiskDataset
 import numpy as np
@@ -1133,6 +1138,9 @@ class NNModelWrapper(ModelWrapper):
 #            log.debug("Shuffling dataset first")
 #            train_dset = train_dset.complete_shuffle(train_dset.data_dir + "-shuffled")
 
+        if MLFLOW_LOADED:
+            mlflow.set_tag("metric_type", pipeline.metric_type)
+
         log.debug("Start of epoch training loop...")
         for ei in LCTimerIterator(self.params, pipeline, self.log):
             tick = time.time()
@@ -1149,6 +1157,16 @@ class NNModelWrapper(ModelWrapper):
                           ei, pipeline.metric_type, train_perf, pipeline.metric_type, valid_perf,
                           pipeline.metric_type, test_perf))
 
+            if MLFLOW_LOADED:
+                mlflow.log_metrics(
+                    {
+                        "train_perf": train_perf,
+                        "valid_perf": valid_perf,
+                        "test_perf": test_perf,
+                    },
+                    step=ei,
+                )
+
             self.num_epochs_trained = ei + 1
             # Compute performance metrics for each subset, and check if we've reached a new best validation set score
             if em.should_stop():
@@ -1163,6 +1181,8 @@ class NNModelWrapper(ModelWrapper):
         # Only copy the model files we need, not the entire directory
         self._copy_model(self.best_model_dir)
         self.log.info(f"Best model from epoch {self.best_epoch} saved to {self.best_model_dir}")
+
+        #mlflow.log_artifact(self.best_model_dir)
 
     def restore(self, checkpoint=None, model_dir=None):
         """Restores this model"""
@@ -3010,6 +3030,17 @@ class GraphConvDCModelWrapper(KerasDeepChemModelWrapper):
                 self.params.dropouts = [0.25] * len(self.params.layer_sizes)
             else:
                 self.params.dropouts = [0.0] * len(self.params.layer_sizes)
+
+        if MLFLOW_LOADED:
+            mlflow.log_params({
+                "batch_size": self.params.batch_size,
+                "learning_rate": self.params.learning_rate,
+                "optimiser_type": self.params.optimizer_type,
+                "graph_conv_layers": self.params.layer_sizes[:-1],
+                "dense_layer_sizes": self.params.layer_sizes[-1],
+                "dropout": self.params.dropouts,
+                "seed": self.params.seed,
+            })
 
         model = dc.models.GraphConvModel(
             self.params.num_model_tasks,

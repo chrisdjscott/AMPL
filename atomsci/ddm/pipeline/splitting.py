@@ -18,6 +18,11 @@ from atomsci.ddm.pipeline.MultitaskScaffoldSplit import MultitaskScaffoldSplitte
 from atomsci.ddm.utils.many_to_one import many_to_one_df
 from atomsci.ddm.pipeline.utils import get_memory_usage
 import collections
+try:
+    import mlflow
+    MLFLOW_LOADED = True
+except:
+    MLFLOW_LOADED = False
 
 logging.basicConfig(format='%(asctime)-15s %(message)s')
 log = logging.getLogger('ATOM')
@@ -46,6 +51,11 @@ def create_splitting(params, random_state=None, seed=None):
         Exception: If params.split_strategy not in ['train_valid_test','k_fold_cv']. Unsupported split strategy
         
     """
+    if MLFLOW_LOADED:
+        mlflow.log_params({
+            "split_strategy": params.split_strategy,
+            "production": params.production,
+        })
 
     if params.production:
         log.debug("Creating ProductionSplitting object...")
