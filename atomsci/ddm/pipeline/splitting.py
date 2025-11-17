@@ -641,6 +641,9 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         valid_num_shards = int(num_shards * self.params.split_valid_frac)
         train_num_shards = num_shards - test_num_shards - valid_num_shards
         log.debug(f"Num shards split: train {train_num_shards}; valid {valid_num_shards}; test {test_num_shards}")
+        # TODO: or we could reshard on the fly or take partial shards instead
+        if train_num_shards == 0 or valid_num_shards == 0 or test_num_shards == 0:
+            raise ValueError(f"Not enough shards to use simple splitter; adjust shard size")
 
         # create the train dataset
         log.debug(f"Creating train dataset...")

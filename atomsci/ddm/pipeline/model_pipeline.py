@@ -667,9 +667,7 @@ class ModelPipeline:
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
         if MLFLOW_LOADED:
-            mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-            mlflow.set_experiment(os.environ["MLFLOW_EXPERIMENT"])
-            mlflow.start_run()
+            mlflow.start_run(run_name=os.getenv("AMPL_MLFLOW_RUN_NAME"))
             mlflow_run = mlflow.active_run()
             self.log.debug(f"mlflow run_id: {mlflow_run.info.run_id}; status: {mlflow_run.info.status}")
             mlflow.set_tags({
