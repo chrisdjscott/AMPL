@@ -7,11 +7,6 @@ import shutil
 import joblib
 import time
 
-try:
-    import mlflow
-    MLFLOW_LOADED = True
-except:
-    MLFLOW_LOADED = False
 import deepchem as dc
 from deepchem.data import DiskDataset
 import numpy as np
@@ -57,6 +52,7 @@ from atomsci.ddm.pipeline import transformations as trans
 from atomsci.ddm.pipeline import perf_data as perf
 import atomsci.ddm.pipeline.parameter_parser as pp
 from atomsci.ddm.pipeline.utils import get_memory_usage
+from atomsci.ddm.pipeline import mlflow_utils
 
 from tensorflow.python.keras.utils.layer_utils import count_params
 
@@ -1138,8 +1134,8 @@ class NNModelWrapper(ModelWrapper):
 #            log.debug("Shuffling dataset first")
 #            train_dset = train_dset.complete_shuffle(train_dset.data_dir + "-shuffled")
 
-        if MLFLOW_LOADED:
-            mlflow.set_tag("metric_type", pipeline.metric_type)
+        if self.params.use_mlflow:
+            mlflow_utils.set_tag(self.params.mlflow_run_id, "metric_type", pipeline.metric_type)
 
         log.debug("Start of epoch training loop...")
         for ei in LCTimerIterator(self.params, pipeline, self.log):
@@ -1157,15 +1153,10 @@ class NNModelWrapper(ModelWrapper):
                           ei, pipeline.metric_type, train_perf, pipeline.metric_type, valid_perf,
                           pipeline.metric_type, test_perf))
 
-            if MLFLOW_LOADED:
-                mlflow.log_metrics(
-                    {
-                        "train_perf": train_perf,
-                        "valid_perf": valid_perf,
-                        "test_perf": test_perf,
-                    },
-                    step=ei,
-                )
+            if self.params.use_mlflow:
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "train_perf", train_perf, step=ei)
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "valid_perf", valid_perf, step=ei)
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "test_perf", test_perf, step=ei)
 
             self.num_epochs_trained = ei + 1
             # Compute performance metrics for each subset, and check if we've reached a new best validation set score
@@ -3031,16 +3022,14 @@ class GraphConvDCModelWrapper(KerasDeepChemModelWrapper):
             else:
                 self.params.dropouts = [0.0] * len(self.params.layer_sizes)
 
-        if MLFLOW_LOADED:
-            mlflow.log_params({
-                "batch_size": self.params.batch_size,
-                "learning_rate": self.params.learning_rate,
-                "optimiser_type": self.params.optimizer_type,
-                "graph_conv_layers": self.params.layer_sizes[:-1],
-                "dense_layer_sizes": self.params.layer_sizes[-1],
-                "dropout": self.params.dropouts,
-                "seed": self.params.seed,
-            })
+        if self.params.use_mlflow:
+            mlflow_utils.log_param(self.params.mlflow_run_id, "batch_size", self.params.batch_size)
+            mlflow_utils.log_param(self.params.mlflow_run_id, "learning_rate", self.params.learning_rate)
+            mlflow_utils.log_param(self.params.mlflow_run_id, "optimiser_type", self.params.optimizer_type)
+            mlflow_utils.log_param(self.params.mlflow_run_id, "graph_conv_layers", self.params.layer_sizes[:-1])
+            mlflow_utils.log_param(self.params.mlflow_run_id, "dense_layer_sizes", self.params.layer_sizes[-1])
+            mlflow_utils.log_param(self.params.mlflow_run_id, "dropouts", self.params.dropouts)
+            mlflow_utils.log_param(self.params.mlflow_run_id, "seed", self.params.seed)
 
         model = dc.models.GraphConvModel(
             self.params.num_model_tasks,

@@ -19,11 +19,6 @@ import pandas as pd
 import scipy as sp
 from sklearn.metrics import pairwise_distances
 import copy
-try:
-    import mlflow
-    MLFLOW_LOADED = True
-except:
-    MLFLOW_LOADED = False
 
 from atomsci.ddm.utils import datastore_functions as dsf
 import atomsci.ddm.utils.model_version_utils as mu
@@ -38,6 +33,7 @@ from atomsci.ddm.pipeline import transformations as trans
 from atomsci.ddm.pipeline import random_seed as rs
 from atomsci.ddm.pipeline import sampling as sample
 from atomsci.ddm.pipeline.utils import get_memory_usage
+from atomsci.ddm.pipeline import mlflow_utils
 
 logging.basicConfig(format='%(asctime)-15s %(message)s')
 
@@ -313,9 +309,14 @@ class ModelPipeline:
         tock = time.time() - tick
         self.log.debug(f"Time to load and featurise the dataset: {tock} seconds")
         self.log.debug(f"Memory usage after loading a featurising the dataset: {get_memory_usage():.3f} GiB")
-        if MLFLOW_LOADED:
-            mlflow.log_metric("dataset_load_featurise_time_seconds", tock)
-            mlflow.log_metric("memory_usage_after_load_featurise_gib", get_memory_usage())
+        if self.params.use_mlflow:
+            mlflow_utils.log_metric(self.params.mlflow_run_id, "dataset_load_featurise_time_seconds", tock)
+            mlflow_utils.log_metric(self.params.mlflow_run_id, "memory_usage_after_load_featurise_gib", get_memory_usage())
+            mlflow_utils.log_param(self.params.mlflow_run_id, "dataset_length", len(self.data.dataset))
+            mlflow_utils.log_param(self.params.mlflow_run_id, "dataset_key", params.dataset_key)
+            mlflow_utils.log_param(self.params.mlflow_run_id, "use_disk_dataset", params.use_disk_dataset)
+            if params.use_disk_dataset:
+                mlflow_utils.log_param(self.params.mlflow_run_id, "shard_size", params.shard_size)
 
         if self.run_mode == 'training':
             tick = time.time()
@@ -339,9 +340,9 @@ class ModelPipeline:
             tock = time.time() - tick
             self.log.debug(f"Time to split the dataset: {tock} seconds")
             self.log.debug(f"Memory usage after splitting the dataset: {get_memory_usage():.3f} GiB")
-            if MLFLOW_LOADED:
-                mlflow.log_metric("dataset_split_time_seconds", tock)
-                mlflow.log_metric("memory_usage_after_splitting_gib", get_memory_usage())
+            if self.params.use_mlflow:
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "dataset_split_time_seconds", tock)
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "memory_usage_after_splitting_gib", get_memory_usage())
 
         # apply sampling before fitting transformers
         if self.run_mode == 'training':
@@ -666,14 +667,12 @@ class ModelPipeline:
 
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
-        if MLFLOW_LOADED:
-            mlflow.start_run(run_name=os.getenv("AMPL_MLFLOW_RUN_NAME"))
-            mlflow_run = mlflow.active_run()
-            self.log.debug(f"mlflow run_id: {mlflow_run.info.run_id}; status: {mlflow_run.info.status}")
-            mlflow.set_tags({
-                "model_type": self.params.model_type,
-                "featurizer": self.params.featurizer,
-            })
+        if self.params.use_mlflow:
+            self.params.mlflow_experiment_id = mlflow_utils.get_or_create_experiment()
+            self.params.mlflow_run_id = mlflow_utils.create_run(self.params.mlflow_experiment_id)
+            self.log.debug(f"Created mlflow experiment {self.params.mlflow_experiment_id} and run {self.params.mlflow_run_id}")
+            mlflow_utils.set_tag(self.params.mlflow_run_id, "model_type", self.params.model_type)
+            mlflow_utils.set_tag(self.params.mlflow_run_id, "featuriser", self.params.featurizer)
 
         try:
             self.log.debug("Start of train model...")
@@ -740,8 +739,8 @@ class ModelPipeline:
             self.orig_params = self.params
 
         finally:
-            if MLFLOW_LOADED:
-                mlflow.end_run()
+            if self.params.use_mlflow:
+                mlflow_utils.end_run(self.params.mlflow_run_id)
 
 
     # ****************************************************************************************
