@@ -706,9 +706,9 @@ class ModelPipeline:
             tock = time.time() - tick
             self.log.debug(f"Time to train the model: {tock} seconds")
             self.log.debug(f"Memory usage after calling model_wrapper.train: {get_memory_usage():.3f} GiB")
-            if MLFLOW_LOADED:
-                mlflow.log_metric("training_time_seconds", tock)
-                mlflow.log_metric("memory_usage_after_training_gib", get_memory_usage())
+            if self.params.use_mlflow:
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "training_time_seconds", tock)
+                mlflow_utils.log_metric(self.params.mlflow_run_id, "memory_usage_after_training_gib", get_memory_usage())
 
             # Create the metadata for the trained model
             self.create_model_metadata()
