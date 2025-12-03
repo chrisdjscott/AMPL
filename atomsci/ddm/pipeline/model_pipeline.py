@@ -595,6 +595,20 @@ class ModelPipeline:
             json.dump(model_metrics, out, sort_keys=True, indent=4, separators=(',', ': '))
             out.write("\n")
 
+        # send metrics to mlflow
+        logged_global = False
+        for d in model_metrics:
+            mlflow_utils.log_metric(self.params.mlflow_run_id, f"{d['label']}_{d['subset']}_mae_score", d['prediction_results']['mae_score'])
+            mlflow_utils.log_metric(self.params.mlflow_run_id, f"{d['label']}_{d['subset']}_r2_score", d['prediction_results']['r2_score'])
+            mlflow_utils.log_metric(self.params.mlflow_run_id, f"{d['label']}_{d['subset']}_rms_score", d['prediction_results']['rms_score'])
+            mlflow_utils.log_metric(self.params.mlflow_run_id, f"{d['subset']}_num_compounds", d['prediction_results']['num_compounds'])
+
+            if not logged_global:
+                logged_global = True
+                mlflow_utils.log_param(self.params.mlflow_run_id, "dataset_hash", d['input_dataset']['dataset_hash'])
+                mlflow_utils.log_param(self.params.mlflow_run_id, "dataset_path", d['input_dataset']['dataset_key'])
+                mlflow_utils.log_param(self.params.mlflow_run_id, "result_dir", d['input_dataset']['external_export_parameters']['result_dir'])
+
         if self.params.save_results:
             if not isinstance(model_metrics, list):
                 model_metrics = [model_metrics]
