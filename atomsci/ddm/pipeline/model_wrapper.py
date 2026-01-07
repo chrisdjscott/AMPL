@@ -1173,8 +1173,6 @@ class NNModelWrapper(ModelWrapper):
         self._copy_model(self.best_model_dir)
         self.log.info(f"Best model from epoch {self.best_epoch} saved to {self.best_model_dir}")
 
-        #mlflow.log_artifact(self.best_model_dir)
-
     def restore(self, checkpoint=None, model_dir=None):
         """Restores this model"""
         dc_torch_restore(self.model, checkpoint, model_dir)

@@ -471,6 +471,9 @@ class ModelPipeline:
             json.dump(self.model_metadata, out, sort_keys=True, indent=4, separators=(',', ': '))
             out.write("\n")
 
+#        if self.params.use_mlflow:
+#            mlflow_utils.log_artifact(self.params.mlflow_run_id, out_file)
+
         if self.params.save_results:
             # Model tracker saves the model state and metadata in the datastore as well as saving the metadata
             # in the model zoo.
@@ -494,6 +497,10 @@ class ModelPipeline:
         else:
             # If not using the model tracker, save the model state and metadata in a tarball in the filesystem
             trkr.save_model_tarball(self.output_dir, self.params.model_tarball_path)
+
+#            if self.params.use_mlflow:
+#                mlflow_utils.log_artifact(self.params.mlflow_run_id, self.params.model_tarball_path)
+
         self.model_wrapper._clean_up_excess_files(self.model_wrapper.model_dir)
 
    # ****************************************************************************************
