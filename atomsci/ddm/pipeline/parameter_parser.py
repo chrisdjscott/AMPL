@@ -1249,6 +1249,18 @@ def get_parser():
         help='Fraction of data to put in the validation set for train_valid_test split strategy.'
              ' TODO: Behavior of split_valid_frac is dependent on split_test_frac and DeepChem')
     parser.add_argument(
+        '--split_train_num', dest='split_train_num', type=int, default=None,
+        help="Number of compounds in the train split. This should only be used with the 'simple_train_valid_test' split strategy"
+             " where you have pre-split the data and want to load the compounds into splits in the order they are in the input file.")
+    parser.add_argument(
+        '--split_valid_num', dest='split_valid_num', type=int, default=None,
+        help="Number of compounds in the valid split. This should only be used with the 'simple_train_valid_test' split strategy"
+             " where you have pre-split the data and want to load the compounds into splits in the order they are in the input file.")
+    parser.add_argument(
+        '--split_test_num', dest='split_test_num', type=int, default=None,
+        help="Number of compounds in the test split. This should only be used with the 'simple_train_valid_test' split strategy"
+             " where you have pre-split the data and want to load the compounds into splits in the order they are in the input file.")
+    parser.add_argument(
         '--splitter', '-s', dest='splitter', default='scaffold', type=str,
         help='Type of splitter to use: index, random, scaffold, butina, ave_min, temporal, fingerprint, multitaskscaffold or stratified.'
              ' Used to set the splitting.py subclass. Can be input as a comma separated list for hyperparameter search'

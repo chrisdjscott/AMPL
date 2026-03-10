@@ -621,6 +621,122 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         # TODO: may still need dataset manager and compact/expand???
         # TODO: may want to reshard if needed to ensure even split
 
+        if self.params.split_train_num is not None and self.params.split_valid_num is not None and self.params.split_test_num is not None:
+            log.debug(f"Loading data in-order by number of compounds...")
+            return self._split_ordered_dataset_number(dataset, attr_df, smiles_col)
+        else:
+            log.debug(f"Loading data in-order by fractions...")
+            return self._split_ordered_dataset_fractions(dataset, attr_df, smiles_col)
+
+    def _split_ordered_dataset_number(self, dataset, attr_df, smiles_col):
+        train_num = self.params.split_train_num
+        valid_num = self.params.split_valid_num
+        test_num = self.params.split_test_num
+        # create three new datasets
+        log.debug(f"Numbers: train {train_num}; valid {valid_num}; test {test_num}")
+
+        total_len = len(dataset)
+        log.debug(f"Length of full dataset: {total_len}")
+        if train_num + valid_num + test_num != total_len:
+            raise ValueError(f"Sum of train ({train_num}), valid ({valid_num}) and test ({test_num}) number parameters do not match total length of dataset ({total_len})")
+
+        log.debug(f"Num shards: {dataset.get_number_shards()}")
+        log.debug(f"Shard size: {dataset.get_shard_size()}")
+
+        train_end = train_num
+        valid_end = train_num + valid_num
+
+        train_dir = dataset.data_dir + "-train"
+        valid_dir = dataset.data_dir + "-valid"
+        test_dir = dataset.data_dir + "-test"
+
+        current_idx = 0
+        train, valid, test = None, None, None
+
+        shard_count = 0
+        for X, y, w, ids in dataset.itershards():
+            shard_size = len(X)
+            
+            # --- 1. Train Portion ---
+            train_start = 0
+            train_stop = min(shard_size, train_end - current_idx)
+            log.debug(f"Shard {shard_count} train_start:train_stop {train_start}:{train_stop}")
+            
+            if train_start < train_stop:  # Only triggers if shard overlaps with train split
+                if train is None:
+                    train = DiskDataset.from_numpy(
+                        X[train_start:train_stop], y[train_start:train_stop], 
+                        w[train_start:train_stop], ids[train_start:train_stop], data_dir=train_dir
+                    )
+                else:
+                    train.add_shard(
+                        X[train_start:train_stop], y[train_start:train_stop], 
+                        w[train_start:train_stop], ids[train_start:train_stop]
+                    )
+
+            # --- 2. Valid Portion ---
+            valid_start = max(0, train_end - current_idx)
+            valid_stop = min(shard_size, valid_end - current_idx)
+            log.debug(f"Shard {shard_count} valid_start:valid_stop {valid_start}:{valid_stop}")
+            
+            if valid_start < valid_stop:  # Only triggers if shard overlaps with valid split
+                if valid is None:
+                    valid = DiskDataset.from_numpy(
+                        X[valid_start:valid_stop], y[valid_start:valid_stop], 
+                        w[valid_start:valid_stop], ids[valid_start:valid_stop], data_dir=valid_dir
+                    )
+                else:
+                    valid.add_shard(
+                        X[valid_start:valid_stop], y[valid_start:valid_stop], 
+                        w[valid_start:valid_stop], ids[valid_start:valid_stop]
+                    )
+
+            # --- 3. Test Portion ---
+            test_start = max(0, valid_end - current_idx)
+            test_stop = shard_size
+            log.debug(f"Shard {shard_count} test_start:test_stop {test_start}:{test_stop}")
+            
+            if test_start < test_stop:  # Only triggers if shard overlaps with test split
+                if test is None:
+                    test = DiskDataset.from_numpy(
+                        X[test_start:test_stop], y[test_start:test_stop], 
+                        w[test_start:test_stop], ids[test_start:test_stop], data_dir=test_dir
+                    )
+                else:
+                    test.add_shard(
+                        X[test_start:test_stop], y[test_start:test_stop], 
+                        w[test_start:test_stop], ids[test_start:test_stop]
+                    )
+
+            # Move our absolute counter forward
+            current_idx += shard_size
+
+            shard_count += 1
+
+        # now do the attr
+        train_attr_begin = 0
+        train_attr_end = train_num
+        log.debug(f"Train attr range: {train_attr_begin}:{train_attr_end}")
+        train_attr = attr_df.iloc[train_attr_begin:train_attr_end, :]
+
+        valid_attr_begin = train_attr_end
+        valid_attr_end = valid_attr_begin + valid_num
+        log.debug(f"Valid attr range: {valid_attr_begin}:{valid_attr_end}")
+        valid_attr = attr_df.iloc[valid_attr_begin:valid_attr_end, :]
+
+        test_attr_begin = valid_attr_end
+        log.debug(f"Test attr range: {test_attr_begin}:")
+        test_attr = attr_df.iloc[test_attr_begin:, :]
+
+        log.debug("End of simple splitter")
+
+        assert len(train) == train_num
+        assert len(valid) == valid_num
+        assert len(test) == test_num
+
+        return [(train, valid)], test, [(train_attr, valid_attr)], test_attr
+
+    def _split_ordered_dataset_fractions(self, dataset, attr_df, smiles_col):
         # create three new datasets
         train_frac = 1.0 - self.params.split_valid_frac - self.params.split_test_frac
         log.debug(f"Fractions: train {train_frac}; valid {self.params.split_valid_frac}; test {self.params.split_test_frac}")
