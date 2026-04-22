@@ -14,7 +14,7 @@ import umap
 
 class SplitStats:
     """This object manages a dataset and a given split dataframe."""
-    def __init__(self, total_df, split_df, smiles_col, id_col, response_cols):
+    def __init__(self, total_df, split_df, smiles_col, id_col, response_cols, batch_size=None):
         """Calculates compound to compound Tanomoto distances between training and
         test subsets. Counts the number of samples for each subset, for each task
         and calculates the train_frac, valid_frac, and test_frac.
@@ -26,12 +26,16 @@ class SplitStats:
             smiles_col (str): SMILES column in total_df.
             id_col (str): ID column in total_df.
             response_cols (str): Response columns in total_df.
+            batch_size (int): Number of training compounds to process at once for
+                distance calculations. Smaller values use less memory but may be slower.
+                Default is 10000. Set to None to process all at once (original behavior).
         """
         self.smiles_col = smiles_col
         self.id_col = id_col
         self.response_cols = response_cols
         self.total_df = total_df
         self.split_df = split_df
+        self.batch_size = batch_size
 
         self.train_df, self.test_df, self.valid_df = split(self.total_df, self.split_df, self.id_col)
 
@@ -48,6 +52,10 @@ class SplitStats:
     def _get_dists(self, df_a, df_b):
         """Calculate Tanimoto distances between each compound in df_a and its nearest neighbor in df_b.
 
+        Uses memory-efficient batch processing to handle large datasets without creating
+        full distance matrices. Processes df_b in chunks to find the nearest neighbor
+        for each compound in df_a.
+
         Args:
             df_a: choice of self.train_df, self.test_df, self.valid_df
             df_b: choice of self.train_df, self.test_df, self.valid_df
@@ -56,8 +64,67 @@ class SplitStats:
             1-D array of floats with one element per row of df_a, containing nearest neighbor
             Tanimoto distances.
         """
-        return cd.calc_dist_smiles('ECFP', 'tanimoto', df_a[self.smiles_col].values, 
-                    df_b[self.smiles_col].values)
+        # If batch_size is None or datasets are small, use original method
+        if self.batch_size is None:
+            return cd.calc_dist_smiles('ECFP', 'tanimoto', df_a[self.smiles_col].values,
+                        df_b[self.smiles_col].values)
+
+        # Use memory-efficient batch processing
+        return self._get_dists_batched(df_a, df_b)
+
+    def _get_dists_batched(self, df_a, df_b):
+        """Memory-efficient calculation of nearest neighbor Tanimoto distances.
+
+        Processes df_b in batches to avoid creating a full distance matrix.
+        For each compound in df_a, finds the minimum distance to any compound in df_b.
+
+        Args:
+            df_a: DataFrame containing compounds to compute distances for
+            df_b: DataFrame containing compounds to compare against (typically training set)
+
+        Returns:
+            1-D array of floats with one element per row of df_a, containing nearest neighbor
+            Tanimoto distances.
+        """
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+        from rdkit import DataStructs
+
+        smiles_a = df_a[self.smiles_col].values
+        smiles_b = df_b[self.smiles_col].values
+
+        # Generate fingerprints for df_a (test/valid compounds)
+        mols_a = [Chem.MolFromSmiles(s) for s in smiles_a]
+        fps_a = [AllChem.GetMorganFingerprintAsBitVect(mol, 2, 1024) for mol in mols_a]
+
+        # Initialize minimum distances to 1.0 (maximum possible Tanimoto distance)
+        min_dists = np.ones(len(fps_a), dtype=np.float32)
+
+        # Process df_b (training compounds) in batches
+        n_b = len(smiles_b)
+        batch_size = self.batch_size
+
+        for start_idx in range(0, n_b, batch_size):
+            end_idx = min(start_idx + batch_size, n_b)
+
+            # Generate fingerprints for this batch of df_b
+            batch_smiles_b = smiles_b[start_idx:end_idx]
+            mols_b = [Chem.MolFromSmiles(s) for s in batch_smiles_b]
+            fps_b = [AllChem.GetMorganFingerprintAsBitVect(mol, 2, 1024) for mol in mols_b]
+
+            # For each compound in df_a, find minimum distance to this batch of df_b
+            for i, fp_a in enumerate(fps_a):
+                # Compute Tanimoto similarities to all compounds in this batch
+                sims = DataStructs.BulkTanimotoSimilarity(fp_a, fps_b)
+                # Convert to distances and find minimum
+                dists = np.array([1.0 - s for s in sims], dtype=np.float32)
+                batch_min = np.min(dists)
+
+                # Update global minimum if this batch has a closer neighbor
+                if batch_min < min_dists[i]:
+                    min_dists[i] = batch_min
+
+        return min_dists
     
     def _split_ratios(self):
         """Calculates the fraction of samples belonging to training, validation, and test subsets.
