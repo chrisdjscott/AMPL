@@ -1231,15 +1231,25 @@ def get_parser():
         help='Boolean flag for loading in previously split train, validation, and test csv files.')
     parser.set_defaults(previously_split=False)
     parser.add_argument(
-        '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv'],
+        '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv', 'indexed'],
         default='train_valid_test',
-        help='Choice of splitting type between "k_fold_cv" for k fold cross validation and "train_valid_test" for a '
-             'normal train/valid/test split. If split_test_frac or split_valid_frac are not set, "train_valid_test" '
-             'sets are split according to the splitting type default.')
+        help='Choice of splitting strategy. "train_valid_test" produces a normal train/valid/test split using the '
+             'splitter algorithm given by --splitter. "k_fold_cv" produces k-fold cross-validation splits. "indexed" '
+             'partitions a pre-shuffled dataset by row index ranges (first N rows = train, next M = valid, rest = test) '
+             'and ignores --splitter; it is intended for very large datasets where the input has already been shuffled '
+             'and unique compound ids are guaranteed.')
     parser.add_argument(
         '--split_test_frac', dest='split_test_frac', type=float, default=0.1,
         help='Fraction of data to put in held-out test set for train_valid_test split strategy.'
              ' TODO: Behavior of split_test_frac is dependent on split_valid_frac and DeepChem')
+    parser.add_argument(
+        '--split_test_num', dest='split_test_num', type=int, default=None,
+        help='Number of compounds in the test split. Only used with --split_strategy=indexed. When set, --split_train_num '
+             'and --split_valid_num must also be set and the three counts must sum to the dataset row count.')
+    parser.add_argument(
+        '--split_train_num', dest='split_train_num', type=int, default=None,
+        help='Number of compounds in the train split. Only used with --split_strategy=indexed. When set, --split_valid_num '
+             'and --split_test_num must also be set and the three counts must sum to the dataset row count.')
     parser.add_argument(
         '--split_uuid', dest='split_uuid', default=None,
         help='UUID for csv file containing train, validation, and test split information. Specific to LLNL datastore')
@@ -1248,10 +1258,14 @@ def get_parser():
         help='Fraction of data to put in the validation set for train_valid_test split strategy.'
              ' TODO: Behavior of split_valid_frac is dependent on split_test_frac and DeepChem')
     parser.add_argument(
+        '--split_valid_num', dest='split_valid_num', type=int, default=None,
+        help='Number of compounds in the valid split. Only used with --split_strategy=indexed. When set, --split_train_num '
+             'and --split_test_num must also be set and the three counts must sum to the dataset row count.')
+    parser.add_argument(
         '--splitter', '-s', dest='splitter', default='scaffold', type=str,
         help='Type of splitter to use: index, random, scaffold, butina, ave_min, temporal, fingerprint, multitaskscaffold or stratified.'
              ' Used to set the splitting.py subclass. Can be input as a comma separated list for hyperparameter search'
-             ' (e.g. \'scaffold\',\'random\')')
+             ' (e.g. \'scaffold\',\'random\'). Ignored when --split_strategy=indexed.')
     # sampling specific parameters (imbalance-learn)
     parser.add_argument(
         '--sampling_method', dest='sampling_method', type=str, default=None,
@@ -1723,6 +1737,23 @@ def postprocess_args(parsed_args):
     elif parsed_args.split_strategy == 'k_fold_cv':
         if parsed_args.split_test_frac >= 1.0:
             raise Exception("Split fraction for test set leaves no room for training and validation data.")
+    elif parsed_args.split_strategy == 'indexed':
+        # Either all three count params are set, or none are. The sum-equals-dataset-size
+        # check is deferred to IndexedSplitting.split_dataset, where the row count is known.
+        indexed_counts = [parsed_args.split_train_num, parsed_args.split_valid_num, parsed_args.split_test_num]
+        num_counts_set = sum(c is not None for c in indexed_counts)
+        if num_counts_set not in (0, 3):
+            raise Exception(
+                "--split_strategy=indexed requires either all three of --split_train_num, "
+                "--split_valid_num and --split_test_num to be set, or none of them. "
+                f"Got {num_counts_set} of 3 set.")
+        if num_counts_set == 3 and any(c < 0 for c in indexed_counts):
+            raise Exception(
+                "--split_train_num, --split_valid_num and --split_test_num must be non-negative.")
+        if num_counts_set == 0 and parsed_args.split_valid_frac + parsed_args.split_test_frac >= 1.0:
+            raise Exception(
+                "--split_strategy=indexed with fraction-based splits: split_valid_frac + "
+                "split_test_frac must be < 1.0 to leave room for a training set.")
 
     # Set conditional defaults for model_choice_score_type based on prediction_type
     if parsed_args.model_choice_score_type is None:

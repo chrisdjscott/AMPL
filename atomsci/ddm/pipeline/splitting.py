@@ -23,7 +23,8 @@ smiles_splits = ['scaffold', 'multitaskscaffold', 'butina', 'fingerprint']
 # List of model parameters related to splitting. Make sure to update this list if we add more parameters.
 split_params = ['splitter', 'split_strategy', 'split_valid_frac', 'split_test_frac', 'butina_cutoff',
                 'num_folds', 'base_splitter', 'cutoff_date', 'date_col', 'previously_split',
-                'mtss_num_super_scaffolds', 'mtss_num_generations', 'mtss_train_test_dist_weight', 
+                'split_train_num', 'split_valid_num', 'split_test_num',
+                'mtss_num_super_scaffolds', 'mtss_num_generations', 'mtss_train_test_dist_weight',
                 'mtss_train_valid_dist_weight', 'mtss_split_fraction_weight', 'mtss_num_pop',
                 'mtss_response_distr_weight']
 
@@ -48,6 +49,8 @@ def create_splitting(params, random_state=None, seed=None):
         return TrainValidTestSplitting(params, random_state=random_state, seed=seed)
     elif params.split_strategy == 'k_fold_cv':
         return KFoldSplitting(params, random_state=random_state, seed=seed)
+    elif params.split_strategy == 'indexed':
+        return IndexedSplitting(params, random_state=random_state, seed=seed)
     else:
         raise Exception("Unknown split strategy %s" % params.split_strategy)
 
@@ -637,6 +640,136 @@ class ProductionSplitting(Splitting):
         test, test_attr = dm.expand_selection(test.ids)
 
         return [(train, valid)], test, [(train_attr, valid_attr)], test_attr
+
+# ****************************************************************************************
+
+class IndexedSplitting(Splitting):
+    """Partitions a dataset by row index ranges, without invoking any DeepChem splitter.
+
+    The first N rows form the training set, the next M form the validation set, and
+    the remaining rows form the test set. N and M are derived from either:
+
+      - count parameters split_train_num, split_valid_num, split_test_num (all three
+        must be set together, and their sum must equal the dataset size), or
+      - fraction parameters split_valid_frac and split_test_frac (with
+        train_frac = 1.0 - valid_frac - test_frac).
+
+    Assumes the input data is already shuffled (e.g. via the shell `shuf` command
+    or a deterministic upstream process) and contains unique compound ids.
+
+    Notes:
+      - params.splitter is ignored under this strategy.
+      - No DatasetManager / deduplication is performed; duplicate ids raise.
+    """
+
+    def __init__(self, params, random_state=None, seed=None):
+        """Initialise without calling Splitting.__init__.
+
+        Splitting.__init__ constructs a DeepChem splitter from params.splitter, which
+        IndexedSplitting does not use. Skipping super().__init__ keeps the construction
+        cost minimal and avoids depending on a valid splitter algorithm name.
+        """
+        self.params = params
+        self.random_state = random_state
+        self.seed = seed
+        self.split = 'indexed'
+        self.num_folds = 1
+        self.splitter = None
+
+    # ****************************************************************************************
+    def get_split_prefix(self, parent=''):
+        if parent != '':
+            parent = "%s/" % parent
+        return "%sindexed" % parent
+
+    # ****************************************************************************************
+    def needs_smiles(self):
+        return False
+
+    # ****************************************************************************************
+    def _compute_indices(self, n):
+        """Resolve count or fraction parameters into (train, valid, test) index arrays."""
+        train_num = getattr(self.params, 'split_train_num', None)
+        valid_num = getattr(self.params, 'split_valid_num', None)
+        test_num = getattr(self.params, 'split_test_num', None)
+        counts = [train_num, valid_num, test_num]
+        num_counts_set = sum(c is not None for c in counts)
+
+        if num_counts_set == 3:
+            if any(c < 0 for c in counts):
+                raise ValueError(
+                    "IndexedSplitting count parameters must be non-negative, got "
+                    f"split_train_num={train_num}, split_valid_num={valid_num}, "
+                    f"split_test_num={test_num}.")
+            total = train_num + valid_num + test_num
+            if total != n:
+                raise ValueError(
+                    f"IndexedSplitting count parameters sum to {total} but the dataset "
+                    f"has {n} rows. Adjust --split_train_num, --split_valid_num and "
+                    f"--split_test_num so they sum to {n}.")
+            train_end = train_num
+            valid_end = train_num + valid_num
+        elif num_counts_set == 0:
+            valid_frac = self.params.split_valid_frac
+            test_frac = self.params.split_test_frac
+            train_frac = 1.0 - valid_frac - test_frac
+            if train_frac <= 0.0:
+                raise ValueError(
+                    f"IndexedSplitting: split_valid_frac ({valid_frac}) + "
+                    f"split_test_frac ({test_frac}) leaves no room for a training set.")
+            train_end = int(round(train_frac * n))
+            valid_end = train_end + int(round(valid_frac * n))
+            # any rounding leftover lands in the test split
+        else:
+            raise ValueError(
+                "IndexedSplitting requires all three of --split_train_num, "
+                "--split_valid_num and --split_test_num to be set together, or none "
+                "of them (in which case --split_valid_frac and --split_test_frac are "
+                f"used). Currently {num_counts_set} of 3 are set.")
+
+        indices = np.arange(n, dtype=np.int64)
+        return indices[:train_end], indices[train_end:valid_end], indices[valid_end:]
+
+    # ****************************************************************************************
+    def _check_unique_ids(self, dataset):
+        if not pd.Series(dataset.ids).is_unique:
+            raise ValueError(
+                "IndexedSplitting requires unique compound ids. Deduplicate the input "
+                "data before using --split_strategy indexed, or use a different split "
+                "strategy that handles duplicates (e.g. train_valid_test).")
+
+    # ****************************************************************************************
+    def split_dataset(self, dataset, attr_df, smiles_col):
+        """Slice the dataset and attr_df by row index ranges.
+
+        Args:
+            dataset (deepchem Dataset): full featurised dataset.
+            attr_df (Pandas DataFrame): dataframe containing SMILES strings indexed
+                by compound id.
+            smiles_col (str): name of the SMILES column. Unused by this splitter
+                but kept for interface compatibility.
+
+        Returns:
+            [(train, valid)], test, [(train_attr, valid_attr)], test_attr
+        """
+        log.info("Splitting data by row index ranges (split_strategy=indexed)")
+        self._check_unique_ids(dataset)
+
+        n = len(dataset)
+        train_idx, valid_idx, test_idx = self._compute_indices(n)
+        log.info("Indexed split sizes: train=%d, valid=%d, test=%d",
+                 len(train_idx), len(valid_idx), len(test_idx))
+
+        train = dataset.select(train_idx)
+        valid = dataset.select(valid_idx)
+        test = dataset.select(test_idx)
+
+        train_attr = attr_df.iloc[train_idx]
+        valid_attr = attr_df.iloc[valid_idx]
+        test_attr = attr_df.iloc[test_idx]
+
+        return [(train, valid)], test, [(train_attr, valid_attr)], test_attr
+
 
 def _copy_modify_NumpyDataset(dataset, **kwargs):
     """Create a copy of the DeepChem Dataset object `dataset` and then modify it based on the given keyword arguments.
