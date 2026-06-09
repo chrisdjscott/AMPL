@@ -1505,7 +1505,8 @@ class _StreamingFeatureDataset:
     """
 
     def __init__(self, source_df, row_indices, featurization, params,
-                 y, w, ids, n_features, transformers=None):
+                 y, w, ids, n_features, transformers=None,
+                 y_raw=None, w_raw=None):
         self._source_df = source_df
         self._row_indices = np.asarray(row_indices, dtype=np.int64)
         self._featurization = featurization
@@ -1515,6 +1516,12 @@ class _StreamingFeatureDataset:
         self._ids = np.asarray(ids)
         self._n_features = int(n_features)
         self._transformers = list(transformers) if transformers else []
+        # _y_raw / _w_raw feed the per-batch transformer chain inside iterbatches.
+        # For an un-transformed dataset they equal _y / _w; after transform() they
+        # stay pinned to the pre-chain arrays so iterbatches re-applies the chain
+        # exactly once instead of stacking on top of the eager rewrite.
+        self._y_raw = np.asarray(y if y_raw is None else y_raw)
+        self._w_raw = np.asarray(w if w_raw is None else w_raw)
 
     def __len__(self):
         return int(self._row_indices.shape[0])
@@ -1582,8 +1589,8 @@ class _StreamingFeatureDataset:
         sub_df = self._source_df.iloc[source_rows]
         features, is_valid = self._featurise_batch(sub_df)
         valid_positions = positions[is_valid]
-        y_b = self._y[valid_positions]
-        w_b = self._w[valid_positions]
+        y_b = self._y_raw[valid_positions]
+        w_b = self._w_raw[valid_positions]
         ids_b = self._ids[valid_positions]
         return features, y_b, w_b, ids_b
 
@@ -1647,6 +1654,8 @@ class _StreamingFeatureDataset:
             ids=self._ids[idx],
             n_features=self._n_features,
             transformers=self._transformers,
+            y_raw=self._y_raw[idx],
+            w_raw=self._w_raw[idx],
         )
 
     def transform(self, transformer, **kwargs):
@@ -1673,6 +1682,8 @@ class _StreamingFeatureDataset:
             ids=new_ids,
             n_features=self._n_features,
             transformers=self._transformers + [transformer],
+            y_raw=self._y_raw,
+            w_raw=self._w_raw,
         )
 
 
