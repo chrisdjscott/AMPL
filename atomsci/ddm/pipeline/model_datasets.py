@@ -1,9 +1,11 @@
 """Classes for dealing with datasets for data-driven modeling."""
 
 import logging
+import math
 import os
 import shutil
 from deepchem.data import NumpyDataset
+from deepchem.data.datasets import pad_batch
 import numpy as np
 import pandas as pd
 import uuid
@@ -1480,6 +1482,322 @@ class FileDataset(ModelDataset):
         return split_df, None
 
 
+# ****************************************************************************************
+class _StreamingFeatureDataset:
+    """DeepChem ``Dataset``-shaped view that featurises on demand inside ``iterbatches``.
+
+    Holds a source DataFrame in memory (cheap) plus a row-index array selecting
+    a subset of those rows. ``y``/``w``/``ids`` are eager and aligned to the
+    subset. ``X`` is intentionally not materialisable: peak memory stays
+    bounded by ``batch_size * n_features`` rather than ``len(dataset) * n_features``.
+
+    Used internally by :class:`StreamingFileDataset` as the value of
+    ``ModelDataset.dataset``. Splitters and DeepChem model wrappers
+    (``TorchModel.default_generator``, ``KerasModel``) consume it through
+    ``iterbatches`` and ``select`` without any other change.
+
+    The single per-batch featurisation seam is :meth:`_featurise_batch` so a
+    future on-disk feature cache can be added as a subclass override without
+    touching the rest of the surface.
+    """
+
+    def __init__(self, source_df, row_indices, featurization, params,
+                 y, w, ids, n_features, transformers=None):
+        self._source_df = source_df
+        self._row_indices = np.asarray(row_indices, dtype=np.int64)
+        self._featurization = featurization
+        self._params = params
+        self._y = np.asarray(y)
+        self._w = np.asarray(w)
+        self._ids = np.asarray(ids)
+        self._n_features = int(n_features)
+        self._transformers = list(transformers) if transformers else []
+
+    def __len__(self):
+        return int(self._row_indices.shape[0])
+
+    @property
+    def X(self):
+        raise NotImplementedError(
+            "StreamingFileDataset does not materialise features. "
+            "Use iterbatches() or pass the dataset to model.fit / model.predict."
+        )
+
+    @property
+    def y(self):
+        return self._y
+
+    @property
+    def w(self):
+        return self._w
+
+    @property
+    def ids(self):
+        return self._ids
+
+    @property
+    def n_features(self):
+        return self._n_features
+
+    def get_shape(self):
+        x_shape = (len(self), self._n_features)
+        return x_shape, self._y.shape, self._w.shape, self._ids.shape
+
+    def get_task_names(self):
+        if len(self._y.shape) < 2:
+            return np.array([0])
+        return np.arange(self._y.shape[1])
+
+    # ----- single per-batch seam -----
+    def _featurise_batch(self, dset_df_slice):
+        """Featurise one slice of the source DataFrame.
+
+        Mirrors :func:`featurization.featurize_smiles`. A future caching
+        subclass overrides this method to read from / write to a feature cache;
+        no other method on this class calls the featurizer directly.
+
+        Returns:
+            tuple ``(features, is_valid)``:
+                features (np.ndarray): array for the valid rows only.
+                is_valid (np.ndarray of bool): length equal to ``len(dset_df_slice)``.
+        """
+        return feat.featurize_smiles(
+            dset_df_slice,
+            featurizer=self._featurization.featurizer_obj,
+            smiles_col=self._params.smiles_col,
+        )
+
+    def _materialise_positions(self, positions):
+        """Featurise the rows at the given positions inside this dataset.
+
+        ``positions`` index into ``[0, len(self))``; the source DataFrame is
+        indexed via ``self._row_indices[positions]``. Invalid SMILES are
+        filtered out of the returned tuple via ``is_valid``.
+        """
+        positions = np.asarray(positions, dtype=np.int64)
+        source_rows = self._row_indices[positions]
+        sub_df = self._source_df.iloc[source_rows]
+        features, is_valid = self._featurise_batch(sub_df)
+        valid_positions = positions[is_valid]
+        y_b = self._y[valid_positions]
+        w_b = self._w[valid_positions]
+        ids_b = self._ids[valid_positions]
+        return features, y_b, w_b, ids_b
+
+    def iterbatches(self, batch_size=None, epochs=1, deterministic=False,
+                    pad_batches=False):
+        """Iterate over ``(X, y, w, ids)`` minibatches.
+
+        Mirrors :meth:`deepchem.data.NumpyDataset.iterbatches`, but X is
+        computed per batch via :meth:`_featurise_batch`. Any transformers
+        registered via :meth:`transform` are applied per batch in the same
+        order they were added.
+        """
+        n = len(self)
+        if batch_size is None:
+            batch_size = n if n > 0 else 1
+        for _ in range(epochs):
+            if deterministic:
+                perm = np.arange(n)
+            else:
+                perm = np.random.permutation(n)
+            num_batches = math.ceil(n / batch_size) if n > 0 else 0
+            for batch_idx in range(num_batches):
+                start = batch_idx * batch_size
+                end = min(n, (batch_idx + 1) * batch_size)
+                X_b, y_b, w_b, ids_b = self._materialise_positions(perm[start:end])
+                for t in self._transformers:
+                    X_b, y_b, w_b, ids_b = t.transform_array(X_b, y_b, w_b, ids_b)
+                if pad_batches and len(X_b) > 0 and len(X_b) < batch_size:
+                    X_b, y_b, w_b, ids_b = pad_batch(
+                        batch_size, X_b, y_b, w_b, ids_b)
+                yield X_b, y_b, w_b, ids_b
+
+    def itersamples(self):
+        """Iterate over single samples as ``(X, y, w, ids)`` tuples.
+
+        X is a zero placeholder of width ``n_features``. AMPL's only
+        ``itersamples`` consumer is the response-normaliser fit path
+        (``transformations.get_statistics_missing_ydata``), which reads
+        only ``y`` and ``w`` — featurising every row here would defeat
+        the point of streaming.
+        """
+        x_placeholder = np.zeros(self._n_features, dtype=np.float32)
+        for i in range(len(self)):
+            yield x_placeholder, self._y[i], self._w[i], self._ids[i]
+
+    def select(self, indices, select_dir=None):
+        """Return a sibling dataset sharing the source CSV with re-indexed rows.
+
+        ``indices`` are positions into ``[0, len(self))`` (matching
+        DeepChem's :meth:`NumpyDataset.select` contract). ``select_dir`` is
+        accepted and ignored for API parity with :class:`DiskDataset`.
+        """
+        idx = np.asarray(indices, dtype=np.int64)
+        return _StreamingFeatureDataset(
+            source_df=self._source_df,
+            row_indices=self._row_indices[idx],
+            featurization=self._featurization,
+            params=self._params,
+            y=self._y[idx],
+            w=self._w[idx],
+            ids=self._ids[idx],
+            n_features=self._n_features,
+            transformers=self._transformers,
+        )
+
+    def transform(self, transformer, **kwargs):
+        """Return a sibling dataset with ``transformer`` applied lazily per batch.
+
+        Consumers that read ``self.y``/``self.w`` directly (perf metrics,
+        weight-balancing transformers) need the eager arrays to reflect the
+        transform, so ``transformer.transform_array`` is invoked once at
+        construction with a placeholder ``X``. Feature transformers are
+        refused at parse time when ``params.streaming`` is set, so the
+        placeholder is never exposed to a transformer that reads ``X``.
+        """
+        n = len(self)
+        x_placeholder = np.zeros((n, self._n_features), dtype=np.float32)
+        _, new_y, new_w, new_ids = transformer.transform_array(
+            x_placeholder, self._y, self._w, self._ids)
+        return _StreamingFeatureDataset(
+            source_df=self._source_df,
+            row_indices=self._row_indices,
+            featurization=self._featurization,
+            params=self._params,
+            y=new_y,
+            w=new_w,
+            ids=new_ids,
+            n_features=self._n_features,
+            transformers=self._transformers + [transformer],
+        )
+
+
+# ****************************************************************************************
+class StreamingFileDataset(FileDataset):
+    """A :class:`FileDataset` that defers featurisation to per-batch calls.
+
+    Use when the featurised matrix would not fit in memory but the source
+    CSV (SMILES + responses) does. The CSV is loaded once at init;
+    ``y``/``w``/``ids``/``attr`` are populated eagerly; ``X`` is computed
+    per batch inside ``self.dataset.iterbatches()``.
+
+    Restrictions (enforced by :func:`parameter_parser.postprocess_args`
+    when ``params.streaming`` is set):
+
+    * ``previously_featurized=True`` is rejected.
+    * ``previously_split=True`` is rejected.
+    * ``split_strategy='k_fold_cv'`` is rejected
+      (``combined_training_data`` materialises features).
+    * ``transformers=True`` with a descriptor featurizer is rejected.
+
+    Wired into :func:`create_model_dataset` when ``params.streaming`` is set.
+    """
+
+    def save_featurized_data(self, featurized_dset_df):
+        """No-op: streaming datasets do not persist a featurised CSV."""
+        return
+
+    def load_featurized_data(self):
+        """Refuses: streaming and ``previously_featurized`` are mutually exclusive."""
+        raise NotImplementedError(
+            "StreamingFileDataset does not support previously_featurized=True. "
+            "Use FileDataset for prefeaturised inputs."
+        )
+
+    def get_featurized_data(self, params=None):
+        """Load the source CSV, populate eager response/id state, and assign a
+        :class:`_StreamingFeatureDataset` to ``self.dataset``.
+
+        Side effects (matching the :class:`ModelDataset` contract):
+            self.dataset: a :class:`_StreamingFeatureDataset` over the full source.
+            self.n_features (int)
+            self.vals (np.ndarray of responses)
+            self.attr (DataFrame of SMILES indexed by compound id)
+            self.untransformed_response_dict (populated)
+        """
+        if params is None:
+            params = self.params
+
+        self.log.info(
+            "Streaming dataset enabled for %s; features will be computed per batch.",
+            self.dataset_name)
+
+        dset_df = self.load_full_dataset()
+        if (params.max_dataset_rows > 0) and (len(dset_df) > params.max_dataset_rows):
+            dset_df = dset_df.sample(n=params.max_dataset_rows).reset_index(drop=True)
+        else:
+            dset_df = dset_df.reset_index(drop=True)
+        check_task_columns(params, dset_df)
+
+        is_class = (params.prediction_type == 'classification')
+        if self.contains_responses and (params.model_type != 'hybrid'):
+            vals, w = feat.make_weights(
+                dset_df[params.response_cols].values, is_class=is_class)
+        else:
+            ncols = len(params.response_cols)
+            vals = np.zeros((len(dset_df), ncols))
+            w = np.ones((len(dset_df), ncols))
+        if is_class:
+            w = w.astype(np.float32)
+        ids = dset_df[params.id_col].astype(str).values
+        attr = feat.get_dataset_attributes(dset_df, params)
+
+        n_features = self._probe_n_features(dset_df, params)
+
+        self.vals = vals
+        self.attr = attr
+        self.n_features = n_features
+        self.update_untransformed_responses(ids, self.vals)
+
+        self.dataset = _StreamingFeatureDataset(
+            source_df=dset_df,
+            row_indices=np.arange(len(dset_df), dtype=np.int64),
+            featurization=self.featurization,
+            params=params,
+            y=self.vals,
+            w=w,
+            ids=ids,
+            n_features=n_features,
+        )
+
+        if len(self.dataset) < params.min_compound_number:
+            self.log.info(
+                "Streaming dataset of length %i is shorter than the recommended length %i",
+                len(self.dataset), params.min_compound_number)
+
+    def _probe_n_features(self, dset_df, params):
+        """Determine feature width without materialising the full matrix.
+
+        Prefers :meth:`Featurization.get_feature_count` when it returns a
+        positive value; otherwise featurises the first row to read the width
+        off the result. Required so consumers that read ``self.n_features``
+        before the first batch (model wrapper init, ``get_shape``) see a real
+        number.
+        """
+        try:
+            n_features = self.featurization.get_feature_count()
+            if n_features is not None and n_features > 0:
+                return int(n_features)
+        except NotImplementedError:
+            pass
+        probe_df = dset_df.iloc[:1]
+        features, is_valid = feat.featurize_smiles(
+            probe_df,
+            featurizer=self.featurization.featurizer_obj,
+            smiles_col=params.smiles_col,
+        )
+        if not np.any(is_valid):
+            raise Exception(
+                "Unable to determine n_features for streaming dataset: "
+                "the first row failed featurisation. Check SMILES in %s." %
+                params.dataset_key)
+        if features.ndim > 1:
+            return int(features.shape[1])
+        return 1
+
+
+# ****************************************************************************************
 class EmbeddingDataset:
     """Template representing a dataset for transfer learning modeling.
     The dataset itself inherits from DatastoreDataset or FileDataset and contains a second dataset, FileDataset or
