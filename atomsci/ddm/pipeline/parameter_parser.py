@@ -564,6 +564,29 @@ not_a_str_list_outside_of_hyperparams = \
     {'model_type','featurizer','splitter','weight_decay_penalty_type','descriptor_type'}
 
 #**********************************************************************************************************
+def _int_or_none(value):
+    """Argparse ``type=`` helper that accepts int strings *and* AMPL's null
+    sentinels.
+
+    ``dict_to_list`` round-trips configs through the command line and emits the
+    literal string ``"None"`` (etc.) for null values; ``postprocess_args`` then
+    substitutes back to Python ``None``. For ``type=str`` arguments this works
+    fine, but ``type=int`` arguments crash during argparse conversion before
+    ``postprocess_args`` runs. This helper handles the null sentinels in the
+    parser so the round-trip is non-fatal for int-typed flags whose default
+    is ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and value in (
+        'null', 'Null', 'NULL', 'none', 'None', 'NONE',
+        'N/A', 'n/a', 'NaN', 'nan', 'NAN', 'NA',
+    ):
+        return None
+    return int(value)
+
+
+#**********************************************************************************************************
 def to_str(params_obj):
     """Converts a namespace.argparse object or a dict into a string for command line input
 
@@ -1243,11 +1266,11 @@ def get_parser():
         help='Fraction of data to put in held-out test set for train_valid_test split strategy.'
              ' TODO: Behavior of split_test_frac is dependent on split_valid_frac and DeepChem')
     parser.add_argument(
-        '--split_test_num', dest='split_test_num', type=int, default=None,
+        '--split_test_num', dest='split_test_num', type=_int_or_none, default=None,
         help='Number of compounds in the test split. Only used with --split_strategy=indexed. When set, --split_train_num '
              'and --split_valid_num must also be set and the three counts must sum to the dataset row count.')
     parser.add_argument(
-        '--split_train_num', dest='split_train_num', type=int, default=None,
+        '--split_train_num', dest='split_train_num', type=_int_or_none, default=None,
         help='Number of compounds in the train split. Only used with --split_strategy=indexed. When set, --split_valid_num '
              'and --split_test_num must also be set and the three counts must sum to the dataset row count.')
     parser.add_argument(
@@ -1258,7 +1281,7 @@ def get_parser():
         help='Fraction of data to put in the validation set for train_valid_test split strategy.'
              ' TODO: Behavior of split_valid_frac is dependent on split_test_frac and DeepChem')
     parser.add_argument(
-        '--split_valid_num', dest='split_valid_num', type=int, default=None,
+        '--split_valid_num', dest='split_valid_num', type=_int_or_none, default=None,
         help='Number of compounds in the valid split. Only used with --split_strategy=indexed. When set, --split_train_num '
              'and --split_test_num must also be set and the three counts must sum to the dataset row count.')
     parser.add_argument(
