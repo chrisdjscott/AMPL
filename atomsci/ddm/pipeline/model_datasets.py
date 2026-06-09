@@ -1688,11 +1688,17 @@ class StreamingFileDataset(FileDataset):
     Restrictions (enforced by :func:`parameter_parser.postprocess_args`
     when ``params.streaming`` is set):
 
-    * ``previously_featurized=True`` is rejected.
     * ``previously_split=True`` is rejected.
     * ``split_strategy='k_fold_cv'`` is rejected
       (``combined_training_data`` materialises features).
+    * ``datastore=True`` is rejected (no streaming datastore backend).
     * ``transformers=True`` with a descriptor featurizer is rejected.
+
+    ``previously_featurized`` is *not* rejected: it defaults to ``True``
+    in AMPL as a "try-load-with-fallback" hint, and this class overrides
+    :meth:`get_featurized_data` so the load-prefeaturised branch is never
+    reached.  :meth:`load_featurized_data` raising
+    :class:`NotImplementedError` is a safety net for any direct call.
 
     Wired into :func:`create_model_dataset` when ``params.streaming`` is set.
     """

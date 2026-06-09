@@ -806,9 +806,9 @@ def dict_to_list(inp_dictionary,replace_spaces=False):
     temp_list_to_command_line = []
 
     # Special case handling for arguments that are False or True by default
-    default_false = ['previously_split','use_shortlist','datastore', 
-                    'save_results','verbose', 'hyperparam', 'split_only', 'is_ki', 'production', 
-                    'embedding_and_features', 
+    default_false = ['previously_split','use_shortlist','datastore',
+                    'save_results','verbose', 'hyperparam', 'split_only', 'is_ki', 'production',
+                    'embedding_and_features', 'streaming',
                     'robustscaler_unit_variance']
     default_true = ['transformers','previously_featurized','uncertainty', 'rerun',
                     'robustscaler_with_centering', 'robustscaler_with_scaling',
@@ -1253,6 +1253,15 @@ def get_parser():
         '--previously_split', dest='previously_split', action='store_true',
         help='Boolean flag for loading in previously split train, validation, and test csv files.')
     parser.set_defaults(previously_split=False)
+    parser.add_argument(
+        '--streaming', dest='streaming', action='store_true',
+        help='Boolean flag to use StreamingFileDataset, which featurises per batch instead of '
+             'materialising the full feature matrix in memory. Intended for very large CSVs where '
+             'the featurised matrix would not fit in RAM but the source SMILES+responses do. '
+             'Mutually exclusive with --previously_split, --split_strategy=k_fold_cv, --datastore, '
+             'and --transformers with a descriptor featurizer; postprocess_args rejects those '
+             'combinations.')
+    parser.set_defaults(streaming=False)
     parser.add_argument(
         '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv', 'indexed'],
         default='train_valid_test',
@@ -1777,6 +1786,32 @@ def postprocess_args(parsed_args):
             raise Exception(
                 "--split_strategy=indexed with fraction-based splits: split_valid_frac + "
                 "split_test_frac must be < 1.0 to leave room for a training set.")
+
+    # StreamingFileDataset rejects combinations whose code paths materialise the feature matrix.
+    # previously_featurized is intentionally NOT rejected here: it defaults to True (a benign
+    # "try-load-then-fallback" hint), and StreamingFileDataset overrides get_featurized_data so
+    # the load-prefeaturised branch is never reached. The override on load_featurized_data is the
+    # safety net for any direct call.
+    if parsed_args.streaming:
+        descriptor_featurizers = ('descriptors', 'computed_descriptors')
+        if parsed_args.previously_split:
+            raise Exception(
+                "--streaming is incompatible with --previously_split in this release; the "
+                "presplit-reload path is untested under streaming. Use a plain FileDataset.")
+        if parsed_args.split_strategy == 'k_fold_cv':
+            raise Exception(
+                "--streaming is incompatible with --split_strategy=k_fold_cv: combined_training_data() "
+                "concatenates per-fold X arrays, which materialises the full feature matrix. "
+                "Use --split_strategy=train_valid_test or =indexed under streaming.")
+        if parsed_args.datastore:
+            raise Exception(
+                "--streaming is incompatible with --datastore: there is no streaming backend for the "
+                "datastore path. Use a file-backed dataset_key under streaming.")
+        if parsed_args.transformers and parsed_args.featurizer in descriptor_featurizers:
+            raise Exception(
+                f"--streaming is incompatible with --transformers and --featurizer={parsed_args.featurizer}: "
+                "feature transformers materialise the full X matrix. Either disable --transformers or "
+                "use a non-descriptor featurizer (e.g. ecfp, graphconv) under streaming.")
 
     # Set conditional defaults for model_choice_score_type based on prediction_type
     if parsed_args.model_choice_score_type is None:
