@@ -1,0 +1,44 @@
+{
+    "comment": "System",
+    "comment": "----------------------------------------",
+    "system": "LC",
+    "datastore": "False",
+    "save_results": "False",
+    "data_owner": "username",
+    "parser_version": "1.0",
+
+    "comment": "Input file",
+    "comment": "----------------------------------------",
+    "dataset_key": "./delaney-processed_curated_fit.csv",
+    "id_col": "compound_id",
+    "smiles_col": "rdkit_smiles",
+    "response_cols": "measured log solubility in mols per litre",
+
+    "comment": "Splitting",
+    "comment": "----------------------------------------",
+    "splitter": "random",
+    "split_valid_frac": "0.15",
+    "split_test_frac": "0.15",
+
+    "comment": "Features and Model",
+    "comment": "----------------------------------------",
+    "featurizer": "graphconv",
+    "model_type": "NN",
+    "prediction_type": "regression",
+    "dropouts": "0.10,0.10,0.10",
+    "layer_sizes": "64,64,64",
+    "learning_rate": "0.000753",
+
+    "comment": "Training",
+    "comment": "----------------------------------------",
+    "max_epochs": "10",
+    "early_stopping_patience": "10",
+
+    "comment": "Reproducibility",
+    "comment": "----------------------------------------",
+    "seed": "0",
+
+    "comment": "Results",
+    "comment": "----------------------------------------",
+    "result_dir": "result"
+}

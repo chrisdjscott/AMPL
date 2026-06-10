@@ -1,0 +1,49 @@
+{
+    "comment": "System",
+    "comment": "----------------------------------------",
+    "system": "LC",
+    "datastore": "False",
+    "save_results": "False",
+    "data_owner": "username",
+    "parser_version": "1.0",
+
+    "comment": "Input file",
+    "comment": "----------------------------------------",
+    "dataset_key": "./delaney-processed_curated_fit.csv",
+    "id_col": "compound_id",
+    "smiles_col": "rdkit_smiles",
+    "response_cols": "measured log solubility in mols per litre",
+
+    "comment": "Splitting",
+    "comment": "----------------------------------------",
+    "splitter": "random",
+    "split_valid_frac": "0.15",
+    "split_test_frac": "0.15",
+
+    "comment": "Features",
+    "comment": "----------------------------------------",
+    "featurizer": "MolGraphConvFeaturizer",
+    "MolGraphConvFeaturizer_use_edges": "True",
+
+    "comment": "Model",
+    "comment": "----------------------------------------",
+    "model_type": "AttentiveFPModel",
+    "prediction_type": "regression",
+    "AttentiveFPModel_mode": "regression",
+    "AttentiveFPModel_num_layers": "2",
+    "AttentiveFPModel_learning_rate": "0.001",
+    "AttentiveFPModel_n_tasks": "1",
+
+    "comment": "Training",
+    "comment": "----------------------------------------",
+    "max_epochs": "10",
+    "early_stopping_patience": "10",
+
+    "comment": "Reproducibility",
+    "comment": "----------------------------------------",
+    "seed": "0",
+
+    "comment": "Results",
+    "comment": "----------------------------------------",
+    "result_dir": "result"
+}

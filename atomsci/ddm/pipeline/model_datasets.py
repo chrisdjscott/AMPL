@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import shutil
+import time
 from deepchem.data import NumpyDataset
 from deepchem.data.datasets import pad_batch
 import numpy as np
@@ -1730,7 +1731,7 @@ class StreamingFileDataset(FileDataset):
         :class:`_StreamingFeatureDataset` to ``self.dataset``.
 
         Side effects (matching the :class:`ModelDataset` contract):
-            self.dataset: a :class:`_StreamingFeatureDataset` over the full source.
+            self.dataset: a :class:`_StreamingFeatureDataset` over the valid rows.
             self.n_features (int)
             self.vals (np.ndarray of responses)
             self.attr (DataFrame of SMILES indexed by compound id)
@@ -1750,6 +1751,18 @@ class StreamingFileDataset(FileDataset):
             dset_df = dset_df.reset_index(drop=True)
         check_task_columns(params, dset_df)
 
+        is_valid, n_features = self._scan_validity(dset_df, params)
+        if not np.any(is_valid):
+            raise Exception(
+                "Streaming dataset: no rows yielded valid features. "
+                "Check SMILES in %s." % params.dataset_key)
+        n_dropped = int((~is_valid).sum())
+        if n_dropped > 0:
+            self.log.info(
+                "Streaming dataset: dropped %d of %d rows that failed featurisation.",
+                n_dropped, len(dset_df))
+        dset_df = dset_df[is_valid].reset_index(drop=True)
+
         is_class = (params.prediction_type == 'classification')
         if self.contains_responses and (params.model_type != 'hybrid'):
             vals, w = feat.make_weights(
@@ -1762,8 +1775,6 @@ class StreamingFileDataset(FileDataset):
             w = w.astype(np.float32)
         ids = dset_df[params.id_col].astype(str).values
         attr = feat.get_dataset_attributes(dset_df, params)
-
-        n_features = self._probe_n_features(dset_df, params)
 
         self.vals = vals
         self.attr = attr
@@ -1786,35 +1797,70 @@ class StreamingFileDataset(FileDataset):
                 "Streaming dataset of length %i is shorter than the recommended length %i",
                 len(self.dataset), params.min_compound_number)
 
-    def _probe_n_features(self, dset_df, params):
-        """Determine feature width without materialising the full matrix.
+    def _scan_validity(self, dset_df, params, chunk_size=512):
+        """Chunked featurise pass to mark valid rows and read ``n_features``.
 
-        Prefers :meth:`Featurization.get_feature_count` when it returns a
-        positive value; otherwise featurises the first row to read the width
-        off the result. Required so consumers that read ``self.n_features``
-        before the first batch (model wrapper init, ``get_shape``) see a real
-        number.
+        Some featurizers (e.g. :class:`MolGraphConvFeaturizer`) reject inputs
+        that RDKit happily parses (single-atom SMILES, disconnected fragments).
+        The eager :meth:`DynamicFeaturization.featurize_data` path filters
+        these via ``is_valid`` before building its dataset surface; the
+        streaming path needs the same filter, otherwise ``.y`` / ``.w`` /
+        ``.ids`` would not line up with the batches emitted by
+        ``iterbatches``.
+
+        Featurises one chunk at a time and discards the features after
+        recording the boolean mask and (once) the feature width. Peak
+        memory stays bounded by ``chunk_size * n_features``.
+
+        Args:
+            dset_df (pd.DataFrame): the source frame after row sampling.
+            params (Namespace): pipeline parameter namespace.
+            chunk_size (int): row count per featurise call. Memory peak
+                scales with this value.
+
+        Returns:
+            tuple ``(is_valid, n_features)``:
+                is_valid (np.ndarray of bool): one entry per row of ``dset_df``.
+                n_features (int): width of the feature vectors for the chosen
+                    featurizer.
         """
         try:
-            n_features = self.featurization.get_feature_count()
-            if n_features is not None and n_features > 0:
-                return int(n_features)
+            declared = self.featurization.get_feature_count()
         except NotImplementedError:
-            pass
-        probe_df = dset_df.iloc[:1]
-        features, is_valid = feat.featurize_smiles(
-            probe_df,
-            featurizer=self.featurization.featurizer_obj,
-            smiles_col=params.smiles_col,
+            declared = None
+        n_features = int(declared) if (declared is not None and declared > 0) else None
+
+        n_rows = len(dset_df)
+        t0 = time.perf_counter()
+        masks = []
+        for start in range(0, n_rows, chunk_size):
+            chunk = dset_df.iloc[start:start + chunk_size]
+            features, is_valid_chunk = feat.featurize_smiles(
+                chunk,
+                featurizer=self.featurization.featurizer_obj,
+                smiles_col=params.smiles_col,
+            )
+            masks.append(is_valid_chunk)
+            if n_features is None and np.any(is_valid_chunk):
+                n_features = int(features.shape[1]) if features.ndim > 1 else 1
+        elapsed = time.perf_counter() - t0
+        rate = n_rows / elapsed if elapsed > 0 else float('inf')
+        self.log.info(
+            "Streaming dataset: _scan_validity featurised %d rows in %.2fs "
+            "(%.0f rows/s, chunk_size=%d, featurizer=%s). This pass discards "
+            "features and runs once at init; see STREAMING_IMPLEMENTATION.md "
+            "for the rationale and alternatives if this becomes a bottleneck.",
+            n_rows, elapsed, rate, chunk_size, params.featurizer,
         )
-        if not np.any(is_valid):
+
+        is_valid = (np.concatenate(masks) if masks
+                    else np.zeros(0, dtype=bool))
+        if n_features is None:
             raise Exception(
                 "Unable to determine n_features for streaming dataset: "
-                "the first row failed featurisation. Check SMILES in %s." %
+                "no rows yielded valid features. Check SMILES in %s." %
                 params.dataset_key)
-        if features.ndim > 1:
-            return int(features.shape[1])
-        return 1
+        return is_valid, n_features
 
 
 # ****************************************************************************************
