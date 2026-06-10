@@ -1,0 +1,6 @@
+# Ephemeral artefacts produced by test_streaming_dataset_models.py.
+# Regenerated on every run from the bundled Delaney source.
+delaney-processed.csv
+delaney-processed_curated_fit.csv
+delaney-processed_curated_fit_train_valid_test_*.csv
+result/
