@@ -1527,6 +1527,37 @@ class _StreamingFeatureDataset:
     def __len__(self):
         return int(self._row_indices.shape[0])
 
+    def _ctor_kwargs(self):
+        """Return the full set of constructor arguments describing this dataset.
+
+        :meth:`select` / :meth:`transform` build siblings by overriding a few
+        of these. Subclasses that add constructor state (e.g. a feature-cache
+        handle) extend this mapping so their state survives those operations.
+        """
+        return dict(
+            source_df=self._source_df,
+            row_indices=self._row_indices,
+            featurization=self._featurization,
+            params=self._params,
+            y=self._y,
+            w=self._w,
+            ids=self._ids,
+            n_features=self._n_features,
+            transformers=self._transformers,
+            y_raw=self._y_raw,
+            w_raw=self._w_raw,
+        )
+
+    def _clone(self, **overrides):
+        """Build a sibling of the same runtime class with selected ctor overrides.
+
+        Uses ``type(self)`` so a caching subclass survives :meth:`select` /
+        :meth:`transform` instead of being downcast to the base class.
+        """
+        kwargs = self._ctor_kwargs()
+        kwargs.update(overrides)
+        return type(self)(**kwargs)
+
     @property
     def X(self):
         raise NotImplementedError(
@@ -1645,16 +1676,11 @@ class _StreamingFeatureDataset:
         accepted and ignored for API parity with :class:`DiskDataset`.
         """
         idx = np.asarray(indices, dtype=np.int64)
-        return _StreamingFeatureDataset(
-            source_df=self._source_df,
+        return self._clone(
             row_indices=self._row_indices[idx],
-            featurization=self._featurization,
-            params=self._params,
             y=self._y[idx],
             w=self._w[idx],
             ids=self._ids[idx],
-            n_features=self._n_features,
-            transformers=self._transformers,
             y_raw=self._y_raw[idx],
             w_raw=self._w_raw[idx],
         )
@@ -1673,18 +1699,11 @@ class _StreamingFeatureDataset:
         x_placeholder = np.zeros((n, self._n_features), dtype=np.float32)
         _, new_y, new_w, new_ids = transformer.transform_array(
             x_placeholder, self._y, self._w, self._ids)
-        return _StreamingFeatureDataset(
-            source_df=self._source_df,
-            row_indices=self._row_indices,
-            featurization=self._featurization,
-            params=self._params,
+        return self._clone(
             y=new_y,
             w=new_w,
             ids=new_ids,
-            n_features=self._n_features,
             transformers=self._transformers + [transformer],
-            y_raw=self._y_raw,
-            w_raw=self._w_raw,
         )
 
 
