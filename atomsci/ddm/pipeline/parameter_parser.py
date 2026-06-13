@@ -1263,6 +1263,15 @@ def get_parser():
              'combinations.')
     parser.set_defaults(streaming=False)
     parser.add_argument(
+        '--feature_cache_dir', dest='feature_cache_dir', default=None,
+        help='Directory for an opt-in disk-backed feature cache used only under --streaming. '
+             'When set, the per-batch featurisation reads cached per-molecule features from '
+             'disk so epochs 2..N skip re-featurising; the init validity scan warms the cache. '
+             'The cache is namespaced by a hash of the featurizer config, so a config change '
+             '(feat_type, ecfp size/radius, whitelist featurizer params) maps to a fresh '
+             'directory and is invalidated automatically. Ignored when --streaming is not set.')
+    parser.set_defaults(feature_cache_dir=None)
+    parser.add_argument(
         '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv', 'indexed'],
         default='train_valid_test',
         help='Choice of splitting strategy. "train_valid_test" produces a normal train/valid/test split using the '
@@ -1812,6 +1821,10 @@ def postprocess_args(parsed_args):
                 f"--streaming is incompatible with --transformers and --featurizer={parsed_args.featurizer}: "
                 "feature transformers materialise the full X matrix. Either disable --transformers or "
                 "use a non-descriptor featurizer (e.g. ecfp, graphconv) under streaming.")
+    elif parsed_args.feature_cache_dir is not None:
+        log.warning(
+            "--feature_cache_dir is set but --streaming is not; the feature cache applies only "
+            "to the streaming path and will be ignored.")
 
     # Set conditional defaults for model_choice_score_type based on prediction_type
     if parsed_args.model_choice_score_type is None:

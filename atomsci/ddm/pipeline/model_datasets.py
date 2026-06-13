@@ -59,8 +59,8 @@ def create_model_dataset(params, featurization, ds_client=None):
         ds_client (Datastore client)
 
     Returns:
-        one of (DatastoreDataset, FileDataset, StreamingFileDataset, DatastoreEmbeddingDataset, FileEmbeddingDataset):
-        instantiated ModelDataset subclass specified by params
+        one of (DatastoreDataset, FileDataset, StreamingFileDataset, CachingStreamingFileDataset,
+        DatastoreEmbeddingDataset, FileEmbeddingDataset): instantiated ModelDataset subclass specified by params
     """
     if params.featurizer == 'embedding' and params.datastore:
         return DatastoreEmbeddingDataset(params, featurization, ds_client)
@@ -69,6 +69,8 @@ def create_model_dataset(params, featurization, ds_client=None):
     elif params.datastore:
         return DatastoreDataset(params, featurization, ds_client)
     elif getattr(params, 'streaming', False):
+        if getattr(params, 'feature_cache_dir', None):
+            return CachingStreamingFileDataset(params, featurization)
         return StreamingFileDataset(params, featurization)
     else:
         return FileDataset(params, featurization)
