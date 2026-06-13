@@ -1708,6 +1708,62 @@ class _StreamingFeatureDataset:
 
 
 # ****************************************************************************************
+class CachingStreamingFeatureDataset(_StreamingFeatureDataset):
+    """A :class:`_StreamingFeatureDataset` backed by a disk feature cache.
+
+    Overrides the single per-batch seam :meth:`_featurise_batch` to read cached
+    per-molecule features from a :class:`feature_cache.FeatureCache` and only
+    featurise the cache misses (writing them back). Once the cache is warm,
+    epochs 2..N do zero featurisation: the override is a pure cache read.
+
+    The cache handle rides through :meth:`select` / :meth:`transform` via the
+    ``feature_cache`` entry that :meth:`_ctor_kwargs` adds, so a dataset handed
+    to a splitter keeps caching after ``.select()``.
+    """
+
+    def __init__(self, *args, feature_cache=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._feature_cache = feature_cache
+
+    def _ctor_kwargs(self):
+        kwargs = super()._ctor_kwargs()
+        kwargs['feature_cache'] = self._feature_cache
+        return kwargs
+
+    def _featurise_batch(self, dset_df_slice):
+        """Featurise a slice via the cache, computing only the misses.
+
+        Returns the exact base contract: ``features`` is the valid-only array
+        (2D float for fixed-width featurizers, 1D object for graph) and
+        ``is_valid`` is a bool array over every row of ``dset_df_slice``.
+        """
+        smiles_list = list(dset_df_slice[self._params.smiles_col].values)
+        units, is_valid, miss_mask = self._feature_cache.get(smiles_list)
+
+        miss_positions = np.flatnonzero(miss_mask)
+        if miss_positions.size:
+            miss_df = dset_df_slice.iloc[miss_positions]
+            miss_feats, miss_valid = super()._featurise_batch(miss_df)
+            miss_smiles = [smiles_list[p] for p in miss_positions]
+            # miss_feats holds rows for valid misses only, in order; map them
+            # back to a per-molecule unit (None for an invalid molecule).
+            miss_units = [None] * miss_positions.size
+            k = 0
+            for m, valid in enumerate(miss_valid):
+                if valid:
+                    miss_units[m] = miss_feats[k]
+                    k += 1
+            self._feature_cache.put(miss_smiles, miss_units, miss_valid)
+            for m, pos in enumerate(miss_positions):
+                units[pos] = miss_units[m]
+                is_valid[pos] = miss_valid[m]
+
+        valid_units = [u for u, valid in zip(units, is_valid) if valid]
+        features = np.array(valid_units)
+        return features, is_valid
+
+
+# ****************************************************************************************
 class StreamingFileDataset(FileDataset):
     """A :class:`FileDataset` that defers featurisation to per-batch calls.
 
