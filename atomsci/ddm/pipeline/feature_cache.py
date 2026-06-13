@@ -305,3 +305,54 @@ class FeatureCache:
 
     def __exit__(self, *exc):
         self.close()
+
+
+# ****************************************************************************************
+def featurise_with_cache(cache, df, featurise_misses, smiles_col):
+    """Featurise a DataFrame slice through a :class:`FeatureCache`.
+
+    Reads cached per-molecule features for the rows already in the cache and
+    computes only the misses via ``featurise_misses``, writing them back. The
+    return value matches :func:`featurization.featurize_smiles`, so callers can
+    drop this in wherever they would have called the featurizer directly.
+
+    Args:
+        cache (FeatureCache): the cache handle.
+        df (pd.DataFrame): rows to featurise.
+        featurise_misses (callable): ``featurise_misses(miss_df) ->
+            (features, is_valid)`` with the same contract as
+            ``featurize_smiles``: ``features`` holds the valid rows only,
+            ``is_valid`` is a bool array over every row of ``miss_df``.
+        smiles_col (str): the SMILES column name, used as the per-molecule key.
+
+    Returns:
+        tuple ``(features, is_valid)``:
+            features (np.ndarray): valid-only array (2D float for fixed-width
+                featurizers, 1D object for graph), reassembled from the stored
+                per-molecule units.
+            is_valid (np.ndarray of bool): length equal to ``len(df)``.
+    """
+    smiles_list = list(df[smiles_col].values)
+    units, is_valid, miss_mask = cache.get(smiles_list)
+
+    miss_positions = np.flatnonzero(miss_mask)
+    if miss_positions.size:
+        miss_df = df.iloc[miss_positions]
+        miss_feats, miss_valid = featurise_misses(miss_df)
+        miss_smiles = [smiles_list[p] for p in miss_positions]
+        # miss_feats holds rows for valid misses only, in order; map them back
+        # to a per-molecule unit (None for an invalid molecule).
+        miss_units = [None] * miss_positions.size
+        k = 0
+        for m, valid in enumerate(miss_valid):
+            if valid:
+                miss_units[m] = miss_feats[k]
+                k += 1
+        cache.put(miss_smiles, miss_units, miss_valid)
+        for m, pos in enumerate(miss_positions):
+            units[pos] = miss_units[m]
+            is_valid[pos] = miss_valid[m]
+
+    valid_units = [u for u, valid in zip(units, is_valid) if valid]
+    features = np.array(valid_units)
+    return features, is_valid

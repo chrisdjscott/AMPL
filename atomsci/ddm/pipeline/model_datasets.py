@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import uuid
 from atomsci.ddm.pipeline import featurization as feat
+from atomsci.ddm.pipeline import feature_cache
 from atomsci.ddm.pipeline import splitting as split
 from atomsci.ddm.utils import datastore_functions as dsf
 from pathlib import Path
@@ -1737,30 +1738,12 @@ class CachingStreamingFeatureDataset(_StreamingFeatureDataset):
         (2D float for fixed-width featurizers, 1D object for graph) and
         ``is_valid`` is a bool array over every row of ``dset_df_slice``.
         """
-        smiles_list = list(dset_df_slice[self._params.smiles_col].values)
-        units, is_valid, miss_mask = self._feature_cache.get(smiles_list)
-
-        miss_positions = np.flatnonzero(miss_mask)
-        if miss_positions.size:
-            miss_df = dset_df_slice.iloc[miss_positions]
-            miss_feats, miss_valid = super()._featurise_batch(miss_df)
-            miss_smiles = [smiles_list[p] for p in miss_positions]
-            # miss_feats holds rows for valid misses only, in order; map them
-            # back to a per-molecule unit (None for an invalid molecule).
-            miss_units = [None] * miss_positions.size
-            k = 0
-            for m, valid in enumerate(miss_valid):
-                if valid:
-                    miss_units[m] = miss_feats[k]
-                    k += 1
-            self._feature_cache.put(miss_smiles, miss_units, miss_valid)
-            for m, pos in enumerate(miss_positions):
-                units[pos] = miss_units[m]
-                is_valid[pos] = miss_valid[m]
-
-        valid_units = [u for u, valid in zip(units, is_valid) if valid]
-        features = np.array(valid_units)
-        return features, is_valid
+        return feature_cache.featurise_with_cache(
+            self._feature_cache,
+            dset_df_slice,
+            super()._featurise_batch,
+            self._params.smiles_col,
+        )
 
 
 # ****************************************************************************************
@@ -1856,7 +1839,7 @@ class StreamingFileDataset(FileDataset):
         self.n_features = n_features
         self.update_untransformed_responses(ids, self.vals)
 
-        self.dataset = _StreamingFeatureDataset(
+        self.dataset = self._make_streaming_dataset(
             source_df=dset_df,
             row_indices=np.arange(len(dset_df), dtype=np.int64),
             featurization=self.featurization,
@@ -1871,6 +1854,14 @@ class StreamingFileDataset(FileDataset):
             self.log.info(
                 "Streaming dataset of length %i is shorter than the recommended length %i",
                 len(self.dataset), params.min_compound_number)
+
+    def _make_streaming_dataset(self, **kwargs):
+        """Build the inner per-batch feature dataset assigned to ``self.dataset``.
+
+        Subclasses override this to return a caching variant; the base returns
+        a plain :class:`_StreamingFeatureDataset`.
+        """
+        return _StreamingFeatureDataset(**kwargs)
 
     def _scan_validity(self, dset_df, params, chunk_size=512):
         """Chunked featurise pass to mark valid rows and read ``n_features``.
@@ -1926,6 +1917,97 @@ class StreamingFileDataset(FileDataset):
             "features and runs once at init; see STREAMING_IMPLEMENTATION.md "
             "for the rationale and alternatives if this becomes a bottleneck.",
             n_rows, elapsed, rate, chunk_size, params.featurizer,
+        )
+
+        is_valid = (np.concatenate(masks) if masks
+                    else np.zeros(0, dtype=bool))
+        if n_features is None:
+            raise Exception(
+                "Unable to determine n_features for streaming dataset: "
+                "no rows yielded valid features. Check SMILES in %s." %
+                params.dataset_key)
+        return is_valid, n_features
+
+
+# ****************************************************************************************
+class CachingStreamingFileDataset(StreamingFileDataset):
+    """A :class:`StreamingFileDataset` that warms and reads a disk feature cache.
+
+    The init-time :meth:`_scan_validity` pass, which in the base class
+    featurises every row and discards the result, instead populates a
+    :class:`feature_cache.FeatureCache` keyed by raw SMILES. The inner per-batch
+    dataset is a :class:`CachingStreamingFeatureDataset` wired to the same cache
+    handle, so epochs 2..N read featurised vectors from disk rather than
+    re-featurising. A fully warm cache does zero featurisation at init.
+
+    The cache directory is namespaced by a hash of the featurizer config, so a
+    config change (feat_type, ecfp size/radius, whitelist featurizer params)
+    maps to a fresh directory and is invalidated automatically.
+
+    Selected by :func:`create_model_dataset` when ``params.streaming`` is set
+    and ``params.feature_cache_dir`` is provided.
+    """
+
+    def __init__(self, params, featurization):
+        super().__init__(params, featurization)
+        self._feature_cache = None
+
+    def _open_feature_cache(self, params, n_features):
+        """Open (creating on first use) the writable cache for this config."""
+        if self._feature_cache is None:
+            config_metadata = self.featurization.get_feature_specific_metadata(params)
+            self._feature_cache = feature_cache.FeatureCache(
+                params.feature_cache_dir,
+                feat_type=self.featurization.feat_type,
+                config_metadata=config_metadata,
+                n_features=n_features,
+            )
+        return self._feature_cache
+
+    def _make_streaming_dataset(self, **kwargs):
+        return CachingStreamingFeatureDataset(
+            feature_cache=self._feature_cache, **kwargs)
+
+    def _scan_validity(self, dset_df, params, chunk_size=512):
+        """Cache-warming variant of :meth:`StreamingFileDataset._scan_validity`.
+
+        Identical row-validity and ``n_features`` semantics, but each chunk is
+        featurised through the cache: rows already cached are read back, only
+        misses hit the featurizer and are written to the cache. The features
+        are therefore retained on disk instead of being discarded.
+        """
+        try:
+            declared = self.featurization.get_feature_count()
+        except NotImplementedError:
+            declared = None
+        n_features = int(declared) if (declared is not None and declared > 0) else None
+
+        cache = self._open_feature_cache(params, n_features)
+
+        def featurise_misses(miss_df):
+            return feat.featurize_smiles(
+                miss_df,
+                featurizer=self.featurization.featurizer_obj,
+                smiles_col=params.smiles_col,
+            )
+
+        n_rows = len(dset_df)
+        t0 = time.perf_counter()
+        masks = []
+        for start in range(0, n_rows, chunk_size):
+            chunk = dset_df.iloc[start:start + chunk_size]
+            features, is_valid_chunk = feature_cache.featurise_with_cache(
+                cache, chunk, featurise_misses, params.smiles_col)
+            masks.append(is_valid_chunk)
+            if n_features is None and np.any(is_valid_chunk):
+                n_features = int(features.shape[1]) if features.ndim > 1 else 1
+        elapsed = time.perf_counter() - t0
+        rate = n_rows / elapsed if elapsed > 0 else float('inf')
+        self.log.info(
+            "Streaming dataset: _scan_validity featurised %d rows in %.2fs "
+            "(%.0f rows/s, chunk_size=%d, featurizer=%s) into feature cache %s. "
+            "Cache misses are written to disk; epochs 2..N read from the cache.",
+            n_rows, elapsed, rate, chunk_size, params.featurizer, cache.cache_dir,
         )
 
         is_valid = (np.concatenate(masks) if masks
