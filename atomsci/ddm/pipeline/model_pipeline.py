@@ -526,10 +526,16 @@ class ModelPipeline:
     # ****************************************************************************************
     def save_split_metadata(self):
         out_file = os.path.join(self.output_dir, 'split_metadata.json')
- 
+
         with open(out_file, 'w') as out:
             json.dump(self.split_data, out, sort_keys=True, indent=4, separators=(',', ': '))
             out.write("\n")
+
+        if self.params.use_mlflow:
+            try:
+                mlflow_utils.log_artifact(self.params.mlflow_run_id, out_file)
+            except Exception as e:
+                self.log.warning(f"Failed to log split metadata artifact to mlflow: {e}")
 
     # ****************************************************************************************
     def create_prediction_metadata(self, prediction_results):
@@ -700,6 +706,9 @@ class ModelPipeline:
                 self.params.mlflow_experiment_id = mlflow_utils.get_or_create_experiment()
                 self.params.mlflow_run_id = mlflow_utils.create_run(self.params.mlflow_experiment_id)
                 self.log.debug(f"Created mlflow experiment {self.params.mlflow_experiment_id} and run {self.params.mlflow_run_id}")
+                run_id_file = os.path.join(self.output_dir, 'mlflow_run_id.txt')
+                with open(run_id_file, 'w') as f:
+                    f.write(self.params.mlflow_run_id)
                 mlflow_utils.set_tag(self.params.mlflow_run_id, "model_type", self.params.model_type)
                 mlflow_utils.set_tag(self.params.mlflow_run_id, "featuriser", self.params.featurizer)
             except Exception as e:
