@@ -58,15 +58,20 @@ def get_or_create_experiment():
     if resp.status_code == 200:
         experiment_id = resp.json()["experiment"]["experiment_id"]
         log.debug(f"Got existing experiment with id: {experiment_id}")
-    else:
+    elif resp.status_code == 404:
+        # Experiment does not exist yet; create it below.
         experiment_id = None
+    else:
+        resp.raise_for_status()
 
     if experiment_id is None:
         log.debug(f"Calling: {MLFLOW_URL}/api/2.0/mlflow/experiments/create")
         log.debug(f"Experiment name is: {MLFLOW_EXPERIMENT_NAME}")
         resp = requests.post(
             f"{MLFLOW_URL}/api/2.0/mlflow/experiments/create",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
             json={"name": MLFLOW_EXPERIMENT_NAME},
+            timeout=REQUESTS_TIMEOUT,
         )
         log.debug(f"Response: {resp}")
         log.debug(f"Status code: {resp.status_code}")
@@ -128,6 +133,8 @@ def log_metric(run_id, metric_name, metric_value, step=0):
 
 
 def log_param(run_id, param_name, param_value):
+    _check_mlflow_configured()
+
     requests.post(
         f"{MLFLOW_URL}/api/2.0/mlflow/runs/log-parameter",
         auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
@@ -139,13 +146,28 @@ def log_param(run_id, param_name, param_value):
     )
 
 
+def _get_artifact_uri(run_id):
+    resp = requests.get(
+        f"{MLFLOW_URL}/api/2.0/mlflow/runs/get",
+        auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+        params={"run_id": run_id},
+        timeout=REQUESTS_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()["run"]["info"]["artifact_uri"]
+
+
 def log_artifact(
     run_id: str,
     local_path: str,
     artifact_path: Optional[str] = None
 ):
     """
-    Upload a single artifact file.
+    Upload a single artifact file via the MLflow proxied artifact endpoint.
+
+    This requires the tracking server to be started with artifact serving
+    enabled (``mlflow server --serve-artifacts``), so that the run's
+    artifact_uri is an ``mlflow-artifacts:/`` URI.
 
     Parameters
     ----------
@@ -158,35 +180,38 @@ def log_artifact(
         If None, defaults to the local file's basename.
     """
     log.debug(f"Logging artifact to mlflow (run id: {run_id}; local_path: {local_path}; artifact_path: {artifact_path})")
+    _check_mlflow_configured()
+
     local_path = Path(local_path)
     if not local_path.is_file():
         raise FileNotFoundError(local_path)
 
     if artifact_path is None:
-        # MLflow REST requires a path - default to filename
         artifact_path = local_path.name
 
-    with local_path.open("rb") as f:
-        files = {
-            "file": (local_path.name, f),
-        }
-        data = {
-            "run_id": run_id,
-            "path": artifact_path,
-        }
-
-        resp = requests.post(
-            f"{MLFLOW_URL}/api/2.0/mlflow/artifacts/upload",
-            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
-            files=files,
-            data=data,
-            timeout=REQUESTS_TIMEOUT,
+    artifact_uri = _get_artifact_uri(run_id)
+    if not artifact_uri.startswith("mlflow-artifacts:/"):
+        raise RuntimeError(
+            f"Cannot upload artifact via REST: run artifact_uri is '{artifact_uri}', "
+            "not a proxied mlflow-artifacts URI. Start the tracking server with --serve-artifacts."
         )
 
-    return resp.json() if resp.content else None
+    prefix = artifact_uri[len("mlflow-artifacts:/"):].strip("/")
+    dest = f"{prefix}/{artifact_path}"
+
+    with local_path.open("rb") as f:
+        resp = requests.put(
+            f"{MLFLOW_URL}/api/2.0/mlflow-artifacts/artifacts/{dest}",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+            data=f,
+            timeout=REQUESTS_TIMEOUT,
+        )
+    resp.raise_for_status()
 
 
 def end_run(run_id):
+    _check_mlflow_configured()
+
     requests.post(
         f"{MLFLOW_URL}/api/2.0/mlflow/runs/update",
         auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),

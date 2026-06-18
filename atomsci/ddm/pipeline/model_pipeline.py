@@ -471,8 +471,11 @@ class ModelPipeline:
             json.dump(self.model_metadata, out, sort_keys=True, indent=4, separators=(',', ': '))
             out.write("\n")
 
-#        if self.params.use_mlflow:
-#            mlflow_utils.log_artifact(self.params.mlflow_run_id, out_file)
+        if self.params.use_mlflow:
+            try:
+                mlflow_utils.log_artifact(self.params.mlflow_run_id, out_file)
+            except Exception as e:
+                self.log.warning(f"Failed to log model metadata artifact to mlflow: {e}")
 
         if self.params.save_results:
             # Model tracker saves the model state and metadata in the datastore as well as saving the metadata
@@ -498,8 +501,11 @@ class ModelPipeline:
             # If not using the model tracker, save the model state and metadata in a tarball in the filesystem
             trkr.save_model_tarball(self.output_dir, self.params.model_tarball_path)
 
-#            if self.params.use_mlflow:
-#                mlflow_utils.log_artifact(self.params.mlflow_run_id, self.params.model_tarball_path)
+            if self.params.use_mlflow:
+                try:
+                    mlflow_utils.log_artifact(self.params.mlflow_run_id, self.params.model_tarball_path)
+                except Exception as e:
+                    self.log.warning(f"Failed to log model tarball artifact to mlflow: {e}")
 
         self.model_wrapper._clean_up_excess_files(self.model_wrapper.model_dir)
 
@@ -690,11 +696,15 @@ class ModelPipeline:
                 model_metadata (dict): The model metadata dictionary that stores the model metrics and metadata
         """
         if self.params.use_mlflow:
-            self.params.mlflow_experiment_id = mlflow_utils.get_or_create_experiment()
-            self.params.mlflow_run_id = mlflow_utils.create_run(self.params.mlflow_experiment_id)
-            self.log.debug(f"Created mlflow experiment {self.params.mlflow_experiment_id} and run {self.params.mlflow_run_id}")
-            mlflow_utils.set_tag(self.params.mlflow_run_id, "model_type", self.params.model_type)
-            mlflow_utils.set_tag(self.params.mlflow_run_id, "featuriser", self.params.featurizer)
+            try:
+                self.params.mlflow_experiment_id = mlflow_utils.get_or_create_experiment()
+                self.params.mlflow_run_id = mlflow_utils.create_run(self.params.mlflow_experiment_id)
+                self.log.debug(f"Created mlflow experiment {self.params.mlflow_experiment_id} and run {self.params.mlflow_run_id}")
+                mlflow_utils.set_tag(self.params.mlflow_run_id, "model_type", self.params.model_type)
+                mlflow_utils.set_tag(self.params.mlflow_run_id, "featuriser", self.params.featurizer)
+            except Exception as e:
+                self.log.warning(f"Failed to initialise mlflow tracking, disabling mlflow logging for this run: {e}")
+                self.params.use_mlflow = False
 
         try:
             self.log.debug("Start of train model...")
