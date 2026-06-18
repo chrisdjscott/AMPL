@@ -97,6 +97,7 @@ class SplitStats:
         # Generate fingerprints for df_a (test/valid compounds)
         mols_a = [Chem.MolFromSmiles(s) for s in smiles_a]
         fps_a = [AllChem.GetMorganFingerprintAsBitVect(mol, 2, 1024) for mol in mols_a]
+        del mols_a
 
         # Initialize minimum distances to 1.0 (maximum possible Tanimoto distance)
         min_dists = np.ones(len(fps_a), dtype=np.float32)
