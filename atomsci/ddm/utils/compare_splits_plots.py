@@ -28,7 +28,8 @@ class SplitStats:
             response_cols (str): Response columns in total_df.
             batch_size (int): Number of training compounds to process at once for
                 distance calculations. Smaller values use less memory but may be slower.
-                Default is 10000. Set to None to process all at once (original behavior).
+                Default is None, which processes all compounds at once using the original
+                full distance matrix method.
         """
         self.smiles_col = smiles_col
         self.id_col = id_col
