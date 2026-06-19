@@ -622,10 +622,10 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         # TODO: may want to reshard if needed to ensure even split
 
         if self.params.split_train_num is not None and self.params.split_valid_num is not None and self.params.split_test_num is not None:
-            log.debug(f"Loading data in-order by number of compounds...")
+            log.debug("Loading data in-order by number of compounds...")
             return self._split_ordered_dataset_number(dataset, attr_df, smiles_col)
         else:
-            log.debug(f"Loading data in-order by fractions...")
+            log.debug("Loading data in-order by fractions...")
             return self._split_ordered_dataset_fractions(dataset, attr_df, smiles_col)
 
     def _split_ordered_dataset_number(self, dataset, attr_df, smiles_col):
@@ -753,10 +753,10 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         log.debug(f"Num shards split: train {train_num_shards}; valid {valid_num_shards}; test {test_num_shards}")
         # TODO: or we could reshard on the fly or take partial shards instead
         if train_num_shards == 0 or valid_num_shards == 0 or test_num_shards == 0:
-            raise ValueError(f"Not enough shards to use simple splitter; adjust shard size")
+            raise ValueError("Not enough shards to use simple splitter; adjust shard size")
 
         # create the train dataset
-        log.debug(f"Creating train dataset...")
+        log.debug("Creating train dataset...")
         tick = time.time()
         shard_start = 0
         shard_end = train_num_shards
@@ -772,7 +772,7 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         log.debug(f"Created train dataset in {time.time() - tick} s")
 
         # create the valid dataset
-        log.debug(f"Creating valid dataset...")
+        log.debug("Creating valid dataset...")
         tick = time.time()
         shard_start = shard_end
         shard_end = shard_start + valid_num_shards
@@ -788,7 +788,7 @@ class SimpleTrainValidTestSplitting(TrainValidTestSplitting):
         log.debug(f"Created valid dataset in {time.time() - tick} s")
 
         # create the test dataset
-        log.debug(f"Creating test dataset...")
+        log.debug("Creating test dataset...")
         tick = time.time()
         shard_start = shard_end
         shard_end = shard_start + test_num_shards

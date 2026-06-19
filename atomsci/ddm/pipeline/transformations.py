@@ -379,7 +379,7 @@ class NormalizationTransformerHybrid(NormalizationTransformer):
                  dataset=None,
                  move_mean=True) :
 
-        log.debug(f"NormalizationTransformerHybrid constructor... transform_X={transform_X}, transform_Y={transform_Y}, transform_w={transform_w}, move_mean={move_mean}")
+        log.debug(f"NormalizationTransformerHybrid constructor... transform_X={transform_X}, transform_y={transform_y}, transform_w={transform_w}, move_mean={move_mean}")
 
         if transform_X :
             X_means, X_stds = dataset.get_statistics(X_stats=True, y_stats=False)

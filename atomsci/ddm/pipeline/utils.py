@@ -3,7 +3,6 @@ import tracemalloc
 import logging
 import sys
 
-import deepchem
 from deepchem.feat.mol_graphs import ConvMol
 
 
@@ -28,7 +27,7 @@ def tracemalloc_snapshot():
 
 
 def sizeof_convmol(mol: ConvMol):
-    assert type(mol) == ConvMol
+    assert isinstance(mol, ConvMol)
 
     log.debug(f"Estimating size of ConvMol {mol}")
 

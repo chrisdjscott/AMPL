@@ -42,7 +42,6 @@ except ImportError:
 import pickle
 import yaml
 import glob
-import time
 from packaging import version
 
 from atomsci.ddm.utils import datastore_functions as dsf
@@ -978,15 +977,17 @@ class NNModelWrapper(ModelWrapper):
                 self.model = models[k]
                 log.debug(f"Model is: {self.model}")
 
+                train_dset, valid_dset = pipeline.data.train_valid_dsets[k]
+                test_dset = pipeline.data.test_dset
+
                 if isinstance(train_dset, DiskDataset):
                     log.debug(f"untransformed train_dset: {train_dset} ({train_dset.data_dir})")
                     log.debug(f"untransformed valid_dset: {valid_dset} ({valid_dset.data_dir})")
                     log.debug(f"untransformed test_dset: {test_dset} ({test_dset.data_dir})")
 
-                train_dset, valid_dset = pipeline.data.train_valid_dsets[k]
                 train_dset = self.transform_dataset(train_dset, fold=k)
                 valid_dset = self.transform_dataset(valid_dset, fold=k)
-                test_dset = self.transform_dataset(pipeline.data.test_dset, fold=k)
+                test_dset = self.transform_dataset(test_dset, fold=k)
 
                 if isinstance(train_dset, DiskDataset):
                     log.debug(f"transformed train_dset: {train_dset} ({train_dset.data_dir})")

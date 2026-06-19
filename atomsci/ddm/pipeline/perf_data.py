@@ -11,7 +11,6 @@ import tempfile
 from contextlib import contextmanager
 
 import deepchem as dc
-from deepchem.data import DiskDataset
 import numpy as np
 from sklearn.metrics import roc_auc_score, confusion_matrix, average_precision_score, precision_score, recall_score
 from sklearn.metrics import accuracy_score, matthews_corrcoef, cohen_kappa_score, log_loss, balanced_accuracy_score
@@ -77,7 +76,7 @@ class LazyArray:
         """Remove the on-disk file."""
         try:
             os.remove(self._path)
-        except:
+        except OSError:
             pass
 
 
