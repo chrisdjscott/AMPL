@@ -1,5 +1,6 @@
 
 import os
+import json
 import logging
 import time
 from typing import Optional
@@ -14,6 +15,9 @@ MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME")
 MLFLOW_RUN_NAME = os.getenv("MLFLOW_RUN_NAME")
 MLFLOW_USERNAME = os.getenv("MLFLOW_TRACKING_USERNAME")
 MLFLOW_PASSWORD = os.getenv("MLFLOW_TRACKING_PASSWORD")
+# optional: nest this run under a parent workflow run and/or attach extra tags
+MLFLOW_PARENT_RUN_ID = os.getenv("MLFLOW_PARENT_RUN_ID")
+MLFLOW_TAGS = os.getenv("MLFLOW_TAGS")
 REQUESTS_TIMEOUT = 60
 
 
@@ -98,6 +102,15 @@ def create_run(experiment_id):
     )
     run_id = run_resp.json()["run"]["info"]["run_id"]
     log.debug(f"Created new run with id: {run_id}")
+
+    # nest under the workflow's parent run, if one was provided
+    if MLFLOW_PARENT_RUN_ID:
+        set_tag(run_id, "mlflow.parentRunId", MLFLOW_PARENT_RUN_ID)
+
+    # arbitrary categorical tags (e.g. snakemake_experiment, model)
+    if MLFLOW_TAGS:
+        for key, value in json.loads(MLFLOW_TAGS).items():
+            set_tag(run_id, key, str(value))
 
     return run_id
 
