@@ -99,6 +99,7 @@ def create_run(experiment_id):
             "start_time": int(time.time() * 1000),
             "run_name": MLFLOW_RUN_NAME,
         },
+        timeout=REQUESTS_TIMEOUT,
     )
     run_id = run_resp.json()["run"]["info"]["run_id"]
     log.debug(f"Created new run with id: {run_id}")
@@ -116,47 +117,62 @@ def create_run(experiment_id):
 
 
 def set_tag(run_id, tag_name, tag_value):
-    _check_mlflow_configured()
+    try:
+        _check_mlflow_configured()
 
-    requests.post(
-        f"{MLFLOW_URL}/api/2.0/mlflow/runs/set-tag",
-        auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
-        json={
-            "run_id": run_id,
-            "key": tag_name,
-            "value": tag_value,
-        },
-    )
+        resp = requests.post(
+            f"{MLFLOW_URL}/api/2.0/mlflow/runs/set-tag",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+            json={
+                "run_id": run_id,
+                "key": tag_name,
+                "value": tag_value,
+            },
+            timeout=REQUESTS_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        log.warning(f"Failed to set mlflow tag '{tag_name}', continuing: {e}")
 
 
 def log_metric(run_id, metric_name, metric_value, step=0):
-    _check_mlflow_configured()
+    try:
+        _check_mlflow_configured()
 
-    requests.post(
-        f"{MLFLOW_URL}/api/2.0/mlflow/runs/log-metric",
-        auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
-        json={
-            "run_id": run_id,
-            "key": metric_name,
-            "value": metric_value,
-            "timestamp": int(time.time() * 1000),
-            "step": step,
-        },
-    )
+        resp = requests.post(
+            f"{MLFLOW_URL}/api/2.0/mlflow/runs/log-metric",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+            json={
+                "run_id": run_id,
+                "key": metric_name,
+                "value": metric_value,
+                "timestamp": int(time.time() * 1000),
+                "step": step,
+            },
+            timeout=REQUESTS_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        log.warning(f"Failed to log mlflow metric '{metric_name}', continuing: {e}")
 
 
 def log_param(run_id, param_name, param_value):
-    _check_mlflow_configured()
+    try:
+        _check_mlflow_configured()
 
-    requests.post(
-        f"{MLFLOW_URL}/api/2.0/mlflow/runs/log-parameter",
-        auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
-        json={
-            "run_id": run_id,
-            "key": param_name,
-            "value": str(param_value),
-        },
-    )
+        resp = requests.post(
+            f"{MLFLOW_URL}/api/2.0/mlflow/runs/log-parameter",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+            json={
+                "run_id": run_id,
+                "key": param_name,
+                "value": str(param_value),
+            },
+            timeout=REQUESTS_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        log.warning(f"Failed to log mlflow param '{param_name}', continuing: {e}")
 
 
 def _get_artifact_uri(run_id):
@@ -223,14 +239,19 @@ def log_artifact(
 
 
 def end_run(run_id):
-    _check_mlflow_configured()
+    try:
+        _check_mlflow_configured()
 
-    requests.post(
-        f"{MLFLOW_URL}/api/2.0/mlflow/runs/update",
-        auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
-        json={
-            "run_id": run_id,
-            "status": "FINISHED",
-            "end_time": int(time.time() * 1000),
-        },
-    )
+        resp = requests.post(
+            f"{MLFLOW_URL}/api/2.0/mlflow/runs/update",
+            auth=HTTPBasicAuth(MLFLOW_USERNAME, MLFLOW_PASSWORD),
+            json={
+                "run_id": run_id,
+                "status": "FINISHED",
+                "end_time": int(time.time() * 1000),
+            },
+            timeout=REQUESTS_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        log.warning(f"Failed to end mlflow run, continuing: {e}")
