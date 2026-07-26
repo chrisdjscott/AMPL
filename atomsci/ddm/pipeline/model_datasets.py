@@ -1022,8 +1022,10 @@ class MinimalDataset(ModelDataset):
             self.log.warning("Done")
         else:
             self.log.warning("Featurizing data...")
+            featurise_time = time.time()
             features, ids, self.vals, self.attr, weights, featurized_dset_df  = self.featurization.featurize_data(dset_df, params, self.contains_responses)
             self.log.warning("Done")
+            self.log.debug(f"Time to featurise: {time.time()-featurise_time:.1f} s")
         self.n_features = self.featurization.get_feature_count()
         
         self.update_untransformed_responses(ids, self.vals)
