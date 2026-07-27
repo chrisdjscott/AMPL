@@ -1020,7 +1020,7 @@ class ModelPipeline:
         # Get the predictions and standard deviations, if calculated, as numpy arrays
         predict_time = time.time()
         preds, stds = self.model_wrapper.generate_predictions(self.data.dataset)
-        logger.debug(f"Time to predict: {time.time()-predict_time:.1f} s")
+        self.log.debug(f"Time to predict: {time.time()-predict_time:.1f} s")
         result_df = pd.DataFrame({self.params.id_col: self.data.attr.index.values,
                                   self.params.smiles_col: self.data.attr[self.params.smiles_col].values})
 
