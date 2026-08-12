@@ -155,6 +155,10 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Claude Code local config, skills and runtime state.
+/.claude/
+/.planning/
+
 # Ephemeral Delaney artefacts written to the repo root by ad-hoc pipeline runs
 # (model_pipeline writes curated/split CSVs next to the working directory).
 # Anchored with a leading slash: the same basenames are checked-in fixtures
