@@ -155,3 +155,8 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Ephemeral Delaney artefacts written to the repo root by ad-hoc pipeline runs
+# (model_pipeline writes curated/split CSVs next to the working directory).
+# Anchored with a leading slash: the same basenames are checked-in fixtures
+# under atomsci/ddm/test/, so an unanchored pattern would hide them.
+/delaney-processed*.csv
