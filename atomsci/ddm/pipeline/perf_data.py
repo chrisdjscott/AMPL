@@ -328,8 +328,11 @@ def create_perf_data(prediction_type, model_dataset, subset, **kwargs):
         split_strategy = 'train_valid_test'
     else:
         split_strategy = model_dataset.params.split_strategy
+    # 'indexed' (IndexedSplitting) is a single train/valid/test partition, so it
+    # uses the same Simple*PerfData as 'train_valid_test' (no cross-fold tracking).
+    single_split = split_strategy in ('train_valid_test', 'indexed')
     if prediction_type == 'regression':
-        if subset == 'full' or split_strategy == 'train_valid_test':
+        if subset == 'full' or single_split:
             # Called simple because no need to track compound IDs across multiple training folds
             return SimpleRegressionPerfData(model_dataset, subset, **kwargs)
         elif split_strategy == 'k_fold_cv':
@@ -337,7 +340,7 @@ def create_perf_data(prediction_type, model_dataset, subset, **kwargs):
         else:
             raise ValueError('Unknown split_strategy %s' % split_strategy)
     elif prediction_type == 'classification':
-        if subset == 'full' or split_strategy == 'train_valid_test':
+        if subset == 'full' or single_split:
             return SimpleClassificationPerfData(model_dataset, subset, **kwargs)
         elif split_strategy == 'k_fold_cv':
             return KFoldClassificationPerfData(model_dataset, subset, **kwargs)

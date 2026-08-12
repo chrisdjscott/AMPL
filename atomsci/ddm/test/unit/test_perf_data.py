@@ -592,3 +592,52 @@ if __name__ == "__main__":
     test_SimpleClassificationPerfData()
     test_KFoldClassificationPerfData()
     test_SimpleRegressionPerfData()
+
+# ****************************************************************************************
+# Regression guard: create_perf_data must accept split_strategy='indexed'.
+#
+# IndexedSplitting (splitting.IndexedSplitting, split_strategy='indexed') produces a
+# single train/valid/test partition, so it needs the same Simple*PerfData as
+# 'train_valid_test'. create_perf_data originally matched 'train_valid_test'
+# literally and raised ValueError('Unknown split_strategy indexed') at EpochManager
+# construction, i.e. before epoch 0 of every streaming run using a scaffold presplit.
+def _indexed_model_dataset(split_strategy):
+    class _Dataset:
+        def __init__(self):
+            self.ids = np.array([0, 1, 2, 3])
+            self.y = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+            self.w = np.ones((4, 1), dtype=float)
+
+    class _ModelDataset:
+        def __init__(self):
+            dset = _Dataset()
+            self.train_valid_dsets = [(dset, dset)]
+            self.dataset = dset
+            self.test_dset = dset
+            self._responses = dset.y
+            self.params = SimpleNamespace(
+                split_strategy=split_strategy,
+                prediction_type='regression',
+                max_invalid_pred_frac=0.01,
+            )
+
+        def get_untransformed_responses(self, ids):
+            return self._responses[np.array(ids, dtype=int)]
+
+    return _ModelDataset()
+
+
+@pytest.mark.parametrize('split_strategy', ['train_valid_test', 'indexed'])
+@pytest.mark.parametrize('subset', ['train', 'valid', 'test'])
+def test_create_perf_data_single_split_strategies(split_strategy, subset):
+    """Both single-partition strategies must yield SimpleRegressionPerfData."""
+    perf = perf_data.create_perf_data(
+        'regression', _indexed_model_dataset(split_strategy), subset)
+    assert isinstance(perf, perf_data.SimpleRegressionPerfData)
+
+
+def test_create_perf_data_rejects_unknown_split_strategy():
+    """A genuinely unknown strategy must still raise, so the guard stays meaningful."""
+    with pytest.raises(ValueError, match='Unknown split_strategy'):
+        perf_data.create_perf_data(
+            'regression', _indexed_model_dataset('not_a_real_strategy'), 'train')
