@@ -1694,12 +1694,16 @@ class _StreamingFeatureDataset:
         Consumers that read ``self.y``/``self.w`` directly (perf metrics,
         weight-balancing transformers) need the eager arrays to reflect the
         transform, so ``transformer.transform_array`` is invoked once at
-        construction with a placeholder ``X``. Feature transformers are
-        refused at parse time when ``params.streaming`` is set, so the
-        placeholder is never exposed to a transformer that reads ``X``.
+        construction with an empty ``X``. Feature transformers are refused at
+        parse time when ``params.streaming`` is set, so every transformer
+        reaching this path is y-only; the assert below keeps that true. A
+        full-height placeholder would be the dense whole-dataset array
+        streaming exists to avoid (20 GB at 5M rows x ecfp).
         """
-        n = len(self)
-        x_placeholder = np.zeros((n, self._n_features), dtype=np.float32)
+        assert not transformer.transform_X, (
+            f"{type(transformer).__name__} transforms X, which streaming applies per "
+            "batch; it cannot be applied eagerly here")
+        x_placeholder = np.zeros((0, self._n_features), dtype=np.float32)
         _, new_y, new_w, new_ids = transformer.transform_array(
             x_placeholder, self._y, self._w, self._ids)
         return self._clone(

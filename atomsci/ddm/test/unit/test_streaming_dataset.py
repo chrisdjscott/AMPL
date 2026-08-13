@@ -207,8 +207,19 @@ def test_select_iterbatches_runs(tmp_path):
 class _AddConstantTransformer:
     """Adds 10.0 to y; leaves X, w, ids untouched (mirrors transform_array contract)."""
 
+    transform_X = False
+
     def transform_array(self, X, y, w, ids):
         return X, y + 10.0, w, ids
+
+
+class _ScaleFeaturesTransformer:
+    """Scales X, which streaming cannot apply eagerly (mirrors transform_array contract)."""
+
+    transform_X = True
+
+    def transform_array(self, X, y, w, ids):
+        return X * 2.0, y, w, ids
 
 
 def test_transform_returns_wrapper_with_eager_y_rewritten(tmp_path):
@@ -226,6 +237,27 @@ def test_transform_applies_per_batch_inside_iterbatches(tmp_path):
     wrapped = d.transform(_AddConstantTransformer())
     _, y_b, _, _ = next(wrapped.iterbatches(batch_size=4, deterministic=True))
     assert np.allclose(y_b, d.y + 10.0)
+
+
+def test_transform_does_not_allocate_a_dense_placeholder(tmp_path):
+    """The eager rewrite must not build a whole-dataset X (20 GB at 5M rows x ecfp)."""
+    d = _make_streaming_dataset(tmp_path, n=6).dataset
+    seen = {}
+
+    class _RecordingTransformer(_AddConstantTransformer):
+        def transform_array(self, X, y, w, ids):
+            seen['x_shape'] = X.shape
+            return super().transform_array(X, y, w, ids)
+
+    d.transform(_RecordingTransformer())
+    assert seen['x_shape'] == (0, d._n_features)
+
+
+def test_transform_rejects_feature_transformers(tmp_path):
+    """A transformer that reads X must fail loudly rather than see an empty array."""
+    d = _make_streaming_dataset(tmp_path, n=6).dataset
+    with pytest.raises(AssertionError, match='transforms X'):
+        d.transform(_ScaleFeaturesTransformer())
 
 
 # ---------------------------------------------------- StreamingFileDataset wiring
