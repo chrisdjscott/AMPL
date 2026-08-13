@@ -29,6 +29,8 @@ SMILES header makes ``index.pkl`` a rebuildable accelerator: a stale or
 missing index is reconstructed by scanning the blob.
 """
 
+import contextlib
+import gc
 import hashlib
 import json
 import logging
@@ -50,6 +52,29 @@ FORMAT_VERSION = 1
 # u32 smiles_len  ... then u8 is_valid + u64 payload_len after the smiles bytes.
 _LEN_HEADER = struct.Struct('<I')
 _VALID_HEADER = struct.Struct('<BQ')
+
+
+# ****************************************************************************************
+@contextlib.contextmanager
+def _gc_paused():
+    """Suspend the garbage collector for the duration of a batch read.
+
+    Unpickling a batch of graph features allocates a large number of tracked
+    objects (a ConvMol carries 16 numpy arrays), and every generational
+    collection those allocations trigger costs time proportional to everything
+    alive. Measured on a 100K graphconv epoch, collections triggered inside the
+    read loop were most of the read path: 42.5 s of a 61.1 s epoch, against
+    11.4 s with the collector off. The objects are still tracked, and are
+    collected as usual once the batch is handed back.
+    """
+    if not gc.isenabled():
+        yield
+        return
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
 
 
 # ****************************************************************************************
@@ -231,17 +256,18 @@ class FeatureCache:
         features = [None] * n
         is_valid = np.zeros(n, dtype=bool)
         miss_mask = np.zeros(n, dtype=bool)
-        for i, smiles in enumerate(smiles_list):
-            entry = self._index.get(smiles)
-            if entry is None:
-                miss_mask[i] = True
-                continue
-            offset, payload_len, valid = entry
-            is_valid[i] = valid
-            if valid:
-                self._open_read_fd()
-                raw = os.pread(self._read_fd, payload_len, offset)
-                features[i] = pickle.loads(raw)
+        with _gc_paused():
+            for i, smiles in enumerate(smiles_list):
+                entry = self._index.get(smiles)
+                if entry is None:
+                    miss_mask[i] = True
+                    continue
+                offset, payload_len, valid = entry
+                is_valid[i] = valid
+                if valid:
+                    self._open_read_fd()
+                    raw = os.pread(self._read_fd, payload_len, offset)
+                    features[i] = pickle.loads(raw)
         return features, is_valid, miss_mask
 
     # --------------------------------------------------------------------- put

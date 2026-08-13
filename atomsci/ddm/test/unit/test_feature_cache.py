@@ -3,6 +3,7 @@
 Standalone: these use plain numpy arrays and small Python objects as feature
 units, so the cache is exercised without invoking any real featurizer.
 """
+import gc
 import os
 
 import numpy as np
@@ -215,3 +216,42 @@ def test_second_handle_sees_writes_via_pread(tmp_path):
     features, _, miss = reader.get(['CCO'])
     assert miss.tolist() == [False]
     np.testing.assert_array_equal(features[0], _vec(0))
+
+
+# ------------------------------------------------------ collector pause on reads
+# Unpickling a batch of graph features allocates enough tracked objects that the
+# collections it triggers dominated the read path: 42.5 s of a 61.1 s streaming
+# epoch on 100K graphconv, against 11.7 s with the collector paused per batch.
+
+
+def test_get_pauses_the_collector_and_restores_it(tmp_path):
+    cache = _open(tmp_path)
+    cache.put(['CCO'], [_vec(0)], [True])
+
+    enabled_during_read = []
+    original_loads = fc.pickle.loads
+
+    def loads(raw):
+        enabled_during_read.append(gc.isenabled())
+        return original_loads(raw)
+
+    fc.pickle.loads = loads
+    try:
+        cache.get(['CCO'])
+    finally:
+        fc.pickle.loads = original_loads
+
+    assert enabled_during_read == [False]
+    assert gc.isenabled()
+
+
+def test_get_leaves_the_collector_off_when_it_was_already_off(tmp_path):
+    cache = _open(tmp_path)
+    cache.put(['CCO'], [_vec(0)], [True])
+
+    gc.disable()
+    try:
+        cache.get(['CCO'])
+        assert not gc.isenabled()
+    finally:
+        gc.enable()
