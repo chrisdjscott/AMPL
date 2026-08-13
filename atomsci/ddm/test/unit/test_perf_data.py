@@ -1,6 +1,7 @@
 import atomsci.ddm.pipeline.perf_data as perf_data
 import atomsci.ddm.pipeline.model_pipeline as model_pipeline
 import atomsci.ddm.pipeline.parameter_parser as parse
+import logging
 import os
 import tempfile
 import deepchem as dc
@@ -641,3 +642,113 @@ def test_create_perf_data_rejects_unknown_split_strategy():
     with pytest.raises(ValueError, match='Unknown split_strategy'):
         perf_data.create_perf_data(
             'regression', _indexed_model_dataset('not_a_real_strategy'), 'train')
+
+
+# EpochManager used to build one PerfData per subset per epoch up front, which duplicates
+# the untransformed responses max_epochs times and reads them out of the dataset just as
+# often. Only the current and best epochs are ever read back, so EpochPerfData keeps those
+# two and derives each epoch's object from the previous one.
+def _kfold_model_dataset():
+    class _Dataset:
+        def __init__(self):
+            self.ids = np.array([0, 1, 2, 3])
+            self.y = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+            self.w = np.ones((4, 1), dtype=float)
+
+    class _ModelDataset:
+        def __init__(self):
+            self._dset = _Dataset()
+            self.test_dset = self._dset
+            self.params = SimpleNamespace(
+                split_strategy='k_fold_cv',
+                prediction_type='regression',
+                max_invalid_pred_frac=0.01,
+            )
+
+        def combined_training_data(self):
+            return self._dset
+
+        def get_subset_responses_and_weights(self, subset):
+            real_vals = dict([(id, self._dset.y[id]) for id in self._dset.ids])
+            weights = dict([(id, self._dset.w[id]) for id in self._dset.ids])
+            return real_vals, weights
+
+    return _ModelDataset()
+
+
+def test_next_epoch_shares_dataset_arrays_and_clears_predictions():
+    """next_epoch must reuse the real values and drop the previous epoch's predictions."""
+    first = perf_data.create_perf_data(
+        'regression', _indexed_model_dataset('train_valid_test'), 'train')
+    first.accumulate_preds(np.array([[0.0], [1.0], [2.0], [3.0]]), first.ids)
+
+    second = first.next_epoch()
+
+    assert second is not first
+    assert second.real_vals is first.real_vals
+    assert second.weights is first.weights
+    assert second.ids is first.ids
+    assert second.pred_vals is None
+    assert second.perf_metrics == []
+    # the epoch we moved on from must be untouched, since it may be the best epoch
+    assert len(first.perf_metrics) == 1
+
+
+def test_next_epoch_resets_kfold_prediction_dict():
+    """The k-fold classes accumulate into a dict of predictions, which must start empty."""
+    first = perf_data.create_perf_data('regression', _kfold_model_dataset(), 'train')
+    first.accumulate_preds(np.array([[0.0], [1.0], [2.0], [3.0]]), np.array([0, 1, 2, 3]))
+    assert first.folds == 1
+
+    second = first.next_epoch()
+
+    assert second.real_vals is first.real_vals
+    assert second.folds == 0
+    assert sorted(second.pred_vals.keys()) == sorted(first.pred_vals.keys())
+    assert all(preds.shape == (0, 1) for preds in second.pred_vals.values())
+
+
+def test_epoch_perf_data_retains_only_current_and_best():
+    """Indexing forward advances the epoch; only the marked best epoch survives behind it."""
+    first = perf_data.create_perf_data(
+        'regression', _indexed_model_dataset('train_valid_test'), 'train')
+    epoch_perf_data = perf_data.EpochPerfData(first)
+
+    assert epoch_perf_data[0] is first
+    epoch_perf_data.mark_best(0)
+
+    second = epoch_perf_data[1]
+    assert second is not first
+    assert epoch_perf_data[1] is second
+    # epoch 0 was the best epoch, so it is still reachable
+    assert epoch_perf_data[0] is first
+
+    # epoch 1 was never the best, so moving to epoch 2 discards it
+    third = epoch_perf_data[2]
+    assert third is not second
+    with pytest.raises(IndexError):
+        epoch_perf_data[1]
+    assert epoch_perf_data[0] is first
+
+
+def test_epoch_manager_builds_one_perf_data_per_subset():
+    """EpochManager must read the untransformed responses once per subset, not once per epoch."""
+    model_dataset = _indexed_model_dataset('train_valid_test')
+    calls = []
+    responses = model_dataset.get_untransformed_responses
+    model_dataset.get_untransformed_responses = lambda ids: (calls.append(ids), responses(ids))[1]
+
+    wrapper = SimpleNamespace(
+        params=SimpleNamespace(
+            max_epochs=100,
+            model_choice_score_type='r2',
+            early_stopping_min_improvement=0.0,
+            early_stopping_patience=10,
+        ),
+        log=logging.getLogger('test'),
+    )
+    perf_data.EpochManager(wrapper, prediction_type='regression', model_dataset=model_dataset)
+
+    assert len(calls) == 3
+    for subset in ['train', 'valid', 'test']:
+        assert isinstance(getattr(wrapper, f'{subset}_perf_data'), perf_data.EpochPerfData)

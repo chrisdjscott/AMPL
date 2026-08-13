@@ -5,6 +5,7 @@ and predictions
 """
 
 
+import copy
 import deepchem as dc
 import numpy as np
 import logging
@@ -360,6 +361,33 @@ class PerfData(object):
     # ****************************************************************************************
     def __init__(self, model_dataset, subset):
         """Initialize any attributes that are common to all PerfData subclasses"""
+
+    # ****************************************************************************************
+    def next_epoch(self):
+        """Returns a PerfData object for the next epoch over the same subset.
+
+        The real values, weights and compound ids do not change between epochs, so the
+        new object shares them with this one rather than reading them from the dataset
+        again; only the accumulated predictions and metrics are reset.
+
+        Returns:
+            PerfData: An object of the same class, holding no predictions.
+        """
+        next_perf_data = copy.copy(self)
+        next_perf_data._reset_preds()
+        return next_perf_data
+
+    # ****************************************************************************************
+    def _reset_preds(self):
+        """Clears the accumulated predictions and performance metrics.
+
+        Side effects:
+            Resets pred_vals, pred_stds, perf_metrics and model_score.
+        """
+        self.pred_vals = None
+        self.pred_stds = None
+        self.perf_metrics = []
+        self.model_score = None
 
     # ****************************************************************************************
     def accumulate_preds(self, predicted_vals, ids, pred_stds=None):
@@ -1152,6 +1180,20 @@ class KFoldRegressionPerfData(RegressionPerfData):
 
     # ****************************************************************************************
     # class KFoldRegressionPerfData
+    def _reset_preds(self):
+        """Clears the predictions accumulated over folds and the performance metrics.
+
+        Side effects:
+            Resets pred_vals, folds, perf_metrics and model_score.
+        """
+        self.pred_vals = dict([(id, np.empty((0, self.num_tasks), dtype=np.float32)) for id in self.pred_vals])
+        self.folds = 0
+        self.perf_metrics = []
+        self.model_score = None
+
+
+    # ****************************************************************************************
+    # class KFoldRegressionPerfData
     def accumulate_preds(self, predicted_vals, ids, pred_stds=None):
         """Add training, validation or test set predictions from the current fold to the data structure
         where we keep track of them.
@@ -1400,6 +1442,21 @@ class KFoldClassificationPerfData(ClassificationPerfData):
         else:
             self.real_vals = real_vals
 
+        self.folds = 0
+        self.perf_metrics = []
+        self.model_score = None
+
+
+    # ****************************************************************************************
+    # class KFoldClassificationPerfData
+    def _reset_preds(self):
+        """Clears the predictions accumulated over folds and the performance metrics.
+
+        Side effects:
+            Resets pred_vals, folds, perf_metrics and model_score.
+        """
+        self.pred_vals = dict([(id, np.empty((0, self.num_tasks, self.num_classes), dtype=np.float32))
+                               for id in self.pred_vals])
         self.folds = 0
         self.perf_metrics = []
         self.model_score = None
@@ -2198,12 +2255,94 @@ class SimpleHybridPerfData(HybridPerfData):
 
 
 # ****************************************************************************************
-class EpochManager:
-    """Manages lists of PerfDatas
+class EpochPerfData:
+    """Holds the PerfData objects for the current and the best epoch of one subset
 
-        This class manages lists of PerfDatas as well as variables related to iteratively
-        training a model over several epochs. This class sets several varaibles in a given
-        ModelWrapper for the sake of backwards compatibility
+        Indexed by epoch index, like the list of PerfData objects it replaces, but only
+        two epochs are ever retained: the epoch being trained and the best epoch so far.
+        Those are the only ones read back, since ModelWrapper.get_perf_data only accepts
+        epoch_label='best'. Keeping one object per epoch costs O(num_cmpds x max_epochs)
+        memory in the real values alone, and reads the untransformed responses out of the
+        dataset once per epoch, both of which scale with the size of the dataset.
+
+    Attributes:
+        Set in __init__:
+            _current (PerfData): The PerfData for the epoch currently being trained.
+
+            _current_epoch (int): The epoch index _current belongs to.
+
+            _best (PerfData): The PerfData for the best epoch, once training has moved
+                past it. None while the best epoch is still the current one.
+
+            _best_epoch (int): The epoch index marked by mark_best.
+    """
+
+    # ****************************************************************************************
+    # class EpochPerfData
+    def __init__(self, perf_data):
+        """Initialize EpochPerfData
+
+        Args:
+           perf_data (PerfData): The PerfData for the first epoch. PerfData objects for
+               later epochs are derived from it with PerfData.next_epoch.
+        """
+        self._current = perf_data
+        self._current_epoch = 0
+        self._best = None
+        self._best_epoch = None
+
+    # ****************************************************************************************
+    # class EpochPerfData
+    def __getitem__(self, ei):
+        """Returns the PerfData for epoch ei
+
+        Advances to epoch ei when ei is ahead of the current epoch, retaining the
+        outgoing PerfData if it belongs to the best epoch.
+
+        Args:
+           ei (int): Epoch index
+
+        Returns:
+           PerfData: The PerfData object for epoch ei.
+
+        Raises:
+           IndexError: If epoch ei has already been discarded.
+        """
+        if ei == self._current_epoch:
+            return self._current
+        if ei == self._best_epoch and self._best is not None:
+            return self._best
+        if ei < self._current_epoch:
+            raise IndexError(f"Epoch {ei} is not retained; only the current epoch "
+                             f"{self._current_epoch} and the best epoch {self._best_epoch} are kept")
+
+        if self._current_epoch == self._best_epoch:
+            self._best = self._current
+        self._current = self._current.next_epoch()
+        self._current_epoch = ei
+        return self._current
+
+    # ****************************************************************************************
+    # class EpochPerfData
+    def mark_best(self, ei):
+        """Marks epoch ei as the best epoch, so its PerfData is retained
+
+        Args:
+           ei (int): Epoch index
+
+        Side effects:
+           Updates self._best_epoch.
+        """
+        self._best_epoch = ei
+
+
+# ****************************************************************************************
+class EpochManager:
+    """Manages the PerfDatas for the current and best epochs
+
+        This class manages the PerfDatas of each subset as well as variables related to
+        iteratively training a model over several epochs. This class sets several varaibles
+        in a given ModelWrapper for the sake of backwards compatibility
 
     Attributes:
        Set in __init__:
@@ -2280,17 +2419,12 @@ class EpochManager:
         self.wrapper.early_stopping_min_improvement = params.early_stopping_min_improvement
         self.wrapper.early_stopping_patience = params.early_stopping_patience
 
-        self.wrapper.train_perf_data = []
-        self.wrapper.valid_perf_data = []
-        self.wrapper.test_perf_data = []
-
-        for _ in range(params.max_epochs):
-            self.wrapper.train_perf_data.append(
-                create_perf_data(subset=self._subsets['train'], **kwargs))
-            self.wrapper.valid_perf_data.append(
-                create_perf_data(subset=self._subsets['valid'], **kwargs))
-            self.wrapper.test_perf_data.append(
-                create_perf_data(subset=self._subsets['test'], **kwargs))
+        self.wrapper.train_perf_data = EpochPerfData(
+            create_perf_data(subset=self._subsets['train'], **kwargs))
+        self.wrapper.valid_perf_data = EpochPerfData(
+            create_perf_data(subset=self._subsets['valid'], **kwargs))
+        self.wrapper.test_perf_data = EpochPerfData(
+            create_perf_data(subset=self._subsets['test'], **kwargs))
 
     # ****************************************************************************************
     # class EpochManager
@@ -2380,6 +2514,24 @@ class EpochManager:
 
     # ****************************************************************************************
     # class EpochManager
+    def _set_best_epoch(self, ei):
+        """Records epoch ei as the best epoch
+
+            Every subset's PerfData for the best epoch is read back after training
+            (ModelWrapper.get_perf_data), so each subset is told to retain it.
+
+        Args:
+           ei (int): Epoch index
+
+        Side effects:
+           Updates wrapper.best_epoch and the retained epoch of each subset's EpochPerfData.
+        """
+        self.wrapper.best_epoch = ei
+        for subset in ['train', 'valid', 'test']:
+            getattr(self.wrapper, f'{subset}_perf_data').mark_best(ei)
+
+    # ****************************************************************************************
+    # class EpochManager
     def update_valid(self, ei):
         """Checks validation score
 
@@ -2401,12 +2553,12 @@ class EpochManager:
             # If we're in production mode, every epoch is the new best epoch
             self._new_best_valid_score()
             self.wrapper.best_valid_score = valid_score
-            self.wrapper.best_epoch = ei
+            self._set_best_epoch(ei)
             self._log.info(f"Total score for epoch {ei} is {valid_score:.3}")
         elif valid_score - self.wrapper.best_valid_score > self.wrapper.early_stopping_min_improvement:
             self._new_best_valid_score()
             self.wrapper.best_valid_score = valid_score
-            self.wrapper.best_epoch = ei
+            self._set_best_epoch(ei)
             self._log.info(f"*** Total score for epoch {ei} is {valid_score:.3}, is new maximum")
         elif ei - self.wrapper.best_epoch > self.wrapper.early_stopping_patience:
             self._log.info(f"No improvement after {self.wrapper.early_stopping_patience} epochs, stopping training")

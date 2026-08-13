@@ -919,11 +919,11 @@ class NNModelWrapper(ModelWrapper):
 
                 best_epoch (int): Initialized as None, keeps track of the epoch with the best validation score
 
-                train_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the training dataset
+                train_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the training dataset
 
-                valid_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the validation dataset
+                valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the validation dataset
 
                 train_epoch_perfs (np.array): Initialized as an empty array,
                     contains a list of dictionaries of predicted values and metrics on the training dataset
@@ -953,11 +953,11 @@ class NNModelWrapper(ModelWrapper):
 
                 best_epoch (int): Initialized as None, keeps track of the epoch with the best validation score
 
-                train_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the training dataset
+                train_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the training dataset
 
-                valid_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the validation dataset
+                valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the validation dataset
 
                 train_epoch_perfs (np.array): Contains a standard training set performance metric (r2_score or roc_auc), averaged over folds,
                     at the end of each epoch.
@@ -1070,11 +1070,11 @@ class NNModelWrapper(ModelWrapper):
 
                 best_validation_score (float): The best validation model choice score attained during training.
 
-                train_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the training dataset
+                train_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the training dataset
 
-                valid_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the validation dataset
+                valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the validation dataset
 
                 train_epoch_perfs (np.array): A standard training set performance metric (r2_score or roc_auc), at the end of each epoch.
 
@@ -1264,11 +1264,11 @@ class HybridModelWrapper(NNModelWrapper):
 
             best_epoch (int): Initialized as None, keeps track of the epoch with the best validation score
 
-            train_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the training dataset
+            train_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the training dataset
 
-            valid_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the validation dataset
+            valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the validation dataset
 
             train_epoch_perfs (np.array of dicts): Initialized as an empty array,
                 contains a list of dictionaries of predicted values and metrics on the training dataset
@@ -2574,11 +2574,11 @@ class MultitaskDCModelWrapper(PytorchDeepChemModelWrapper):
 
             best_epoch (int): Initialized as None, keeps track of the epoch with the best validation score
 
-            train_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the training dataset
+            train_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the training dataset
 
-            valid_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the validation dataset
+            valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the validation dataset
 
             train_epoch_perfs (np.array of dicts): Initialized as an empty array,
                 contains a list of dictionaries of predicted values and metrics on the training dataset
@@ -2610,11 +2610,11 @@ class MultitaskDCModelWrapper(PytorchDeepChemModelWrapper):
 
                 best_validation_score (float): The best validation model choice score attained during training.
 
-                train_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the training dataset
+                train_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the training dataset
 
-                valid_perf_data (list of PerfData): Initialized as an empty array,
-                    contains the predictions and performance of the validation dataset
+                valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                    and best epochs, with the predictions and performance of the validation dataset
 
                 train_epoch_perfs (np.array): A standard training set performance metric (r2_score or roc_auc), at the end of each epoch.
 
@@ -2889,11 +2889,11 @@ class GraphConvDCModelWrapper(KerasDeepChemModelWrapper):
 
             best_epoch (int): Initialized as None, keeps track of the epoch with the best validation score
 
-            train_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the training dataset
+            train_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the training dataset
 
-            valid_perf_data (np.array of PerfData): Initialized as an empty array,
-                contains the predictions and performance of the validation dataset
+            valid_perf_data (EpochPerfData): Holds the PerfData for the current
+                and best epochs, with the predictions and performance of the validation dataset
 
             train_epoch_perfs (np.array of dicts): Initialized as an empty array,
                 contains a list of dictionaries of predicted values and metrics on the training dataset
