@@ -731,6 +731,50 @@ def test_epoch_perf_data_retains_only_current_and_best():
     assert epoch_perf_data[0] is first
 
 
+def test_epoch_perf_data_best_marked_before_subset_advances():
+    """A subset accumulated after _set_best_epoch must advance to the new-best epoch,
+    not return the previous best's snapshot.
+
+    EpochManager.update_epoch marks the best epoch on all subsets during the valid
+    update (EpochManager._set_best_epoch), before the test subset has advanced to that
+    epoch (test is accumulated last). __getitem__ must not hand back the stale _best for
+    an epoch that has not been trained yet; it must advance _current and accumulate into
+    the fresh PerfData. Otherwise the new-best epoch's test predictions land in the
+    previous best's object, and compute_perf_metrics returns perf_metrics[0] (the
+    previous best's score) instead of the new best's.
+    """
+    first = perf_data.create_perf_data(
+        'regression', _indexed_model_dataset('train_valid_test'), 'test')
+    epd = perf_data.EpochPerfData(first)
+
+    # Epoch 0 is the first best. Accumulate, then mark best (best == current here, so
+    # _best is still None and the advance below snapshots epoch 0 into _best).
+    epd[0].accumulate_preds(np.array([[0.0], [1.0], [2.0], [3.0]]), first.ids)  # r2 = 1.0
+    epd.mark_best(0)
+
+    # Advance past epoch 0; the current==best branch snapshots epoch 0 into _best.
+    epd[1].accumulate_preds(np.array([[1.0], [1.0], [1.0], [1.0]]), first.ids)
+
+    # Epoch 2 becomes a new best. _set_best_epoch marks it on every subset during the
+    # valid update, BEFORE the test subset advances to epoch 2.
+    epd.mark_best(2)
+
+    # The test subset now reaches epoch 2. This must advance to a fresh PerfData, not
+    # return the stale epoch-0 snapshot held in _best.
+    new_best = epd[2]
+    new_best.accumulate_preds(np.array([[3.0], [3.0], [3.0], [3.0]]), first.ids)  # r2 < 0
+
+    # Advance once more so the new best is snapshotted into _best.
+    epd[3].accumulate_preds(np.array([[0.0], [1.0], [2.0], [3.0]]), first.ids)
+
+    best = epd[2]
+    assert best is new_best
+    # The best snapshot holds only the epoch-2 score, not epoch 0's prepended before it.
+    assert len(best.perf_metrics) == 1
+    r2, _ = best.compute_perf_metrics()
+    assert r2 < 0  # epoch 2's score, not epoch 0's 1.0
+
+
 def test_epoch_manager_builds_one_perf_data_per_subset():
     """EpochManager must read the untransformed responses once per subset, not once per epoch."""
     model_dataset = _indexed_model_dataset('train_valid_test')

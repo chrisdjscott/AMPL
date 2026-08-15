@@ -2310,7 +2310,13 @@ class EpochPerfData:
         """
         if ei == self._current_epoch:
             return self._current
-        if ei == self._best_epoch and self._best is not None:
+        # The best snapshot is only reachable once training has moved past it. The best
+        # epoch is marked during the valid update, before the test subset has advanced to
+        # that epoch (test is accumulated last in EpochManager.update_epoch), so at that
+        # moment ei == _best_epoch but ei > _current_epoch. Returning the stale _best there
+        # would write the epoch's test predictions into the previous best's PerfData. The
+        # ei < _current_epoch guard restricts this branch to genuine past-best reads.
+        if ei == self._best_epoch and self._best is not None and ei < self._current_epoch:
             return self._best
         if ei < self._current_epoch:
             raise IndexError(f"Epoch {ei} is not retained; only the current epoch "
