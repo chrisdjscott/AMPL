@@ -796,3 +796,68 @@ def test_epoch_manager_builds_one_perf_data_per_subset():
     assert len(calls) == 3
     for subset in ['train', 'valid', 'test']:
         assert isinstance(getattr(wrapper, f'{subset}_perf_data'), perf_data.EpochPerfData)
+
+
+# reuse_fit_train_preds: when a pre-computed train_pred is supplied to update_epoch,
+# the train subset must skip self._make_pred and use train_pred directly, while valid
+# and test always run self._make_pred (the inference predict pass). Without train_pred
+# all three subsets run self._make_pred, preserving the pre-flag behaviour.
+def _epoch_manager_for_seam_test(model_dataset):
+    wrapper = SimpleNamespace(
+        params=SimpleNamespace(
+            max_epochs=100,
+            model_choice_score_type='r2',
+            early_stopping_min_improvement=0.0,
+            early_stopping_patience=10,
+        ),
+        log=logging.getLogger('test'),
+    )
+    em = perf_data.EpochManager(
+        wrapper, prediction_type='regression', model_dataset=model_dataset)
+    return em, wrapper
+
+
+def test_update_epoch_train_pred_skips_make_pred_for_train_only():
+    """train_pred supplied: train uses it (no make_pred), valid/test still make_pred."""
+    model_dataset = _indexed_model_dataset('train_valid_test')
+    em, _ = _epoch_manager_for_seam_test(model_dataset)
+
+    make_pred_calls = []
+
+    def make_pred(dset):
+        make_pred_calls.append(dset)
+        return np.asarray(model_dataset.get_untransformed_responses(dset.ids))
+
+    em.set_make_pred(make_pred)
+
+    train_dset = model_dataset.train_valid_dsets[0][0]
+    valid_dset = model_dataset.dataset
+    test_dset = model_dataset.test_dset
+    train_pred = np.asarray(model_dataset.get_untransformed_responses(train_dset.ids))
+
+    em.update_epoch(0, train_dset=train_dset, valid_dset=valid_dset,
+                    test_dset=test_dset, train_pred=train_pred)
+    # train skipped make_pred; valid and test did not.
+    assert make_pred_calls == [valid_dset, test_dset]
+
+
+def test_update_epoch_without_train_pred_calls_make_pred_for_all_subsets():
+    """No train_pred: all three subsets run make_pred (unchanged pre-flag behaviour)."""
+    model_dataset = _indexed_model_dataset('train_valid_test')
+    em, _ = _epoch_manager_for_seam_test(model_dataset)
+
+    make_pred_calls = []
+
+    def make_pred(dset):
+        make_pred_calls.append(dset)
+        return np.asarray(model_dataset.get_untransformed_responses(dset.ids))
+
+    em.set_make_pred(make_pred)
+
+    train_dset = model_dataset.train_valid_dsets[0][0]
+    valid_dset = model_dataset.dataset
+    test_dset = model_dataset.test_dset
+
+    em.update_epoch(0, train_dset=train_dset, valid_dset=valid_dset,
+                    test_dset=test_dset)
+    assert make_pred_calls == [train_dset, valid_dset, test_dset]
