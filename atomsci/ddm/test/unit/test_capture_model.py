@@ -73,6 +73,15 @@ def test_make_capturing_unsupported_class_raises():
         make_capturing(NotADeepChemModel, True)
 
 
+def test_pop_before_fit_raises_a_useful_error():
+    """Popping with nothing captured must name the cause, not surface a bare
+    AttributeError on the internal buffer."""
+    model = make_capturing(MultitaskRegressor, True)(
+        1, 16, layer_sizes=[32], dropouts=[0.0], batch_size=8)
+    with pytest.raises(RuntimeError, match='No captured train predictions'):
+        model.pop_captured_train_preds([])
+
+
 # The flag is argparse ``store_true``. ``dict_to_list`` must emit the bare flag
 # (``--reuse_fit_train_preds``), not ``--reuse_fit_train_preds True`` (which
 # argparse rejects with "unrecognized arguments: True"). This requires the flag
@@ -256,3 +265,19 @@ def test_reuse_fit_train_preds_dropout_train_differs_valid_test_identical(tmp_pa
         w_off.train_epoch_perfs, w_on.train_epoch_perfs, equal_nan=True), (
         f'train perf unexpectedly identical at dropout=0.4: '
         f'{w_off.train_epoch_perfs} vs {w_on.train_epoch_perfs}')
+
+
+# The flag changes what the saved train metrics mean (training-mode, dropout on,
+# per-batch weights vs the inference predict pass), and those metrics are
+# aggregated across runs by compare_models. The metadata must therefore record
+# which footing the run was on, or flag-on and flag-off models are
+# indistinguishable downstream.
+def test_flag_is_recorded_in_model_metadata(tmp_path):
+    csv = _write_tiny_csv(tmp_path / 'tiny.csv', n=40)
+    common = dict(max_epochs='1')
+
+    on = _train_streaming_nn(csv, str(tmp_path / 'on'), 'True', **common)
+    assert on.model_metadata['model_parameters']['reuse_fit_train_preds'] is True
+
+    off = _train_streaming_nn(csv, str(tmp_path / 'off'), 'False', **common)
+    assert off.model_metadata['model_parameters']['reuse_fit_train_preds'] is False

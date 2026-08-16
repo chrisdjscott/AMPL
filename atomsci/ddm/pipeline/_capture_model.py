@@ -8,15 +8,28 @@ always run the inference predict pass.
 
 This is a DeepChem 2.8.0-coupled fork of ``KerasModel.fit_generator`` /
 ``TorchModel.fit_generator`` (and ``KerasModel._create_gradient_fn``). The fit
-loops are copied verbatim from deepchem 2.8.0 with a capture block added; a
-deepchem upgrade is a re-verification event (see the risk register in
-``findings.md``).
+loops below are copied verbatim from deepchem 2.8.0 with a capture block added,
+so **a deepchem upgrade is a re-verification event**: re-diff both
+``fit_generator`` copies against the new deepchem source, and re-run
+``atomsci/ddm/test/unit/test_capture_model.py``, whose lr=0 / dropout=0 tests
+assert the captured predictions equal ``model.predict`` exactly.
+
+Two further couplings to be aware of:
+
+- The capture only overrides ``fit_generator``, which it requires to be driven
+  by the id-carrying ``default_generator`` below. ``fit_on_batch`` passes raw
+  3-tuples straight to ``fit_generator`` and would therefore fail on a
+  capturing model. AMPL never calls it.
+- :meth:`_CaptureMixin.pop_captured_train_preds` assumes only the last batch of
+  an epoch is padded (see the note on its padding trim).
 """
 import logging
 import time
 from collections.abc import Sequence as SequenceCollection
 
 import numpy as np
+import tensorflow as tf
+import torch
 
 from deepchem.models.keras_model import KerasModel
 from deepchem.models.torch_models.torch_model import TorchModel
@@ -24,15 +37,6 @@ from deepchem.models.optimizers import LearningRateSchedule
 from deepchem.trans import undo_transforms
 
 logger = logging.getLogger(__name__)
-
-try:
-    import tensorflow as tf
-except ImportError:  # pragma: no cover - tensorflow is a deepchem dependency
-    tf = None
-try:
-    import torch
-except ImportError:  # pragma: no cover - torch is a deepchem dependency
-    torch = None
 
 
 class _IdRecorder:
@@ -68,6 +72,13 @@ class _CaptureMixin:
     dataset reference), and ``pop_captured_train_preds`` (post-processing
     identical to ``model.predict``).
     """
+
+    # Class-level defaults so pop_captured_train_preds before the first fit
+    # fails with the message below rather than an opaque AttributeError.
+    _capture_dataset = None
+    _capture_train_size = 0
+    _captured_outputs = None
+    _captured_ids = None
 
     def fit(self, dataset, nb_epoch=10, **kwargs):
         self._capture_dataset = dataset
@@ -116,11 +127,26 @@ class _CaptureMixin:
         (``nb_epoch=1``); under multi-epoch ``fit`` the last epoch's prediction
         for a duplicated id wins the reorder.
         """
+        if not self._captured_outputs:
+            raise RuntimeError(
+                "No captured train predictions to pop. pop_captured_train_preds "
+                "must be called after a fit() on this model, once per fit, and "
+                "only on a model built with make_capturing(cls, True).")
         outputs = self._captured_outputs
         ids = self._captured_ids
         n = self._capture_train_size
         bs = self.batch_size
         # Trim the padded tail of each epoch's last batch by count.
+        #
+        # This assumes the last batch of an epoch is the only padded one, which
+        # holds because every batch before it is exactly batch_size rows. Note
+        # StreamingFileDataset.iterbatches pads ANY short batch, and
+        # _materialise_positions can shorten a batch by dropping rows whose
+        # SMILES fail to featurise -- but StreamingFileDataset pre-scans
+        # validity and drops those rows at construction, so no mid-epoch batch
+        # is ever short. If that pre-scan ever goes away, this trim leaves
+        # untrimmed duplicates and the reorder below raises KeyError on the
+        # dropped ids.
         nbpe = (n + bs - 1) // bs  # batches per epoch (ceil)
         if nbpe > 0:
             real_last = n - (nbpe - 1) * bs

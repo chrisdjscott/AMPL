@@ -388,6 +388,11 @@ class ModelPipeline:
             transformer_bucket=self.params.transformer_bucket,
             transformer_oid=self.params.transformer_oid,
             uncertainty=self.params.uncertainty,
+            # Records which footing the saved train metrics are on: when True the train
+            # scores come from the training-mode fit pass (dropout on, per-batch weights)
+            # rather than the inference predict pass, so they are not comparable to the
+            # train scores of a default (False) run.
+            reuse_fit_train_preds=self.params.reuse_fit_train_preds,
             time_generated=time.time(),
             save_results=self.params.save_results,
             hyperparam_uuid=self.params.hyperparam_uuid,
