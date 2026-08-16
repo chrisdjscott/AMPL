@@ -997,7 +997,11 @@ class NNModelWrapper(ModelWrapper):
 
                 # We turn off automatic checkpointing - we only want to save a checkpoints for the final model.
                 self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0, restore=False)
-                train_pred = self.model.predict(train_dset, self.transformers[k])
+                if self.params.reuse_fit_train_preds:
+                    train_pred = self.model.pop_captured_train_preds(
+                        self.transformers[k])[0]
+                else:
+                    train_pred = self.model.predict(train_dset, self.transformers[k])
                 test_pred = self.model.predict(test_dset, self.transformers[k])
 
                 train_perf = train_perf_data.accumulate_preds(train_pred, train_dset.ids)
@@ -1035,7 +1039,12 @@ class NNModelWrapper(ModelWrapper):
 
         for ei in range(self.best_epoch+1):
             self.model.fit(fit_dataset, nb_epoch=1, checkpoint_interval=0, restore=False)
-            train_perf, test_perf = em.update_epoch(ei, train_dset=fit_dataset, test_dset=test_dset)
+            train_pred = None
+            if self.params.reuse_fit_train_preds:
+                train_pred = self.model.pop_captured_train_preds(
+                    self.transformers['final'])[0]
+            train_perf, test_perf = em.update_epoch(ei, train_dset=fit_dataset,
+                                test_dset=test_dset, train_pred=train_pred)
 
             self.log.info(f"Combined folds: Epoch {ei}, training {pipeline.metric_type} = {train_perf:.3},"
                          + f"test {pipeline.metric_type} = {test_perf:.3}")
@@ -1100,8 +1109,13 @@ class NNModelWrapper(ModelWrapper):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
             self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0)
+            train_pred = None
+            if self.params.reuse_fit_train_preds:
+                train_pred = self.model.pop_captured_train_preds(
+                    self.transformers['final'])[0]
             train_perf, valid_perf, test_perf = em.update_epoch(ei,
-                                train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset)
+                                train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset,
+                                train_pred=train_pred)
 
             self.log.info("Epoch %d: training %s = %.3f, validation %s = %.3f, test %s = %.3f" % (
                           ei, pipeline.metric_type, train_perf, pipeline.metric_type, valid_perf,
@@ -2643,8 +2657,13 @@ class MultitaskDCModelWrapper(PytorchDeepChemModelWrapper):
             # Train the model for one epoch. We turn off automatic checkpointing, so the last checkpoint
             # saved will be the one we created intentionally when we reached a new best validation score.
             self.model.fit(train_dset, nb_epoch=1, checkpoint_interval=0)
+            train_pred = None
+            if self.params.reuse_fit_train_preds:
+                train_pred = self.model.pop_captured_train_preds(
+                    self.transformers['final'])[0]
             train_perf, valid_perf, test_perf = em.update_epoch(ei,
-                                train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset)
+                                train_dset=train_dset, valid_dset=valid_dset, test_dset=test_dset,
+                                train_pred=train_pred)
 
             self.log.info("Epoch %d: training %s = %.3f, validation %s = %.3f, test %s = %.3f" % (
                           ei, pipeline.metric_type, train_perf, pipeline.metric_type, valid_perf,
