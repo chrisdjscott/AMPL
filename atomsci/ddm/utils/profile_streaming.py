@@ -121,12 +121,12 @@ def _instrument_epoch_phases():
                 TIMINGS.add('phase_total', time.perf_counter() - start)
         return fit
 
-    def accumulate(self, ei, subset, dset):
+    def accumulate(self, ei, subset, dset, train_pred=None):
         TIMINGS.epoch = ei
         TIMINGS.phase = f'predict_{subset}'
         start = time.perf_counter()
         try:
-            return original_accumulate(self, ei, subset, dset)
+            return original_accumulate(self, ei, subset, dset, train_pred=train_pred)
         finally:
             TIMINGS.add('phase_total', time.perf_counter() - start)
             # the next fit call belongs to the following epoch
