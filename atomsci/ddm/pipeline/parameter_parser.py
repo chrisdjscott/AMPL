@@ -1272,6 +1272,15 @@ def get_parser():
              'directory and is invalidated automatically. Ignored when --streaming is not set.')
     parser.set_defaults(feature_cache_dir=None)
     parser.add_argument(
+        '--reuse_fit_train_preds', dest='reuse_fit_train_preds', action='store_true',
+        help='Boolean flag to compute train_perf by reusing the fit forward pass (training-mode, '
+             'dropout on) instead of the separate inference-mode model.predict pass. valid and test '
+             'are always computed on the inference predict pass regardless. Streaming-only: ignored '
+             'when --streaming is not set. Default off, which preserves the current behaviour and '
+             'cross-run comparability; turning it on changes the train curve footing (training-mode, '
+             'stochastic) so it is not comparable to default-off runs.')
+    parser.set_defaults(reuse_fit_train_preds=False)
+    parser.add_argument(
         '--split_strategy', dest='split_strategy', choices=['train_valid_test', 'k_fold_cv', 'indexed'],
         default='train_valid_test',
         help='Choice of splitting strategy. "train_valid_test" produces a normal train/valid/test split using the '
@@ -1825,6 +1834,11 @@ def postprocess_args(parsed_args):
         log.warning(
             "--feature_cache_dir is set but --streaming is not; the feature cache applies only "
             "to the streaming path and will be ignored.")
+    if parsed_args.reuse_fit_train_preds and not parsed_args.streaming:
+        log.warning(
+            "--reuse_fit_train_preds is set but --streaming is not; the fit-pass train prediction "
+            "reuse applies only to the streaming path and will be ignored.")
+        parsed_args.reuse_fit_train_preds = False
 
     # Set conditional defaults for model_choice_score_type based on prediction_type
     if parsed_args.model_choice_score_type is None:

@@ -2444,7 +2444,8 @@ class EpochManager:
 
     # ****************************************************************************************
     # class EpochManager
-    def update_epoch(self, ei, train_dset=None, valid_dset=None, test_dset=None):
+    def update_epoch(self, ei, train_dset=None, valid_dset=None, test_dset=None,
+                     train_pred=None):
         """Update training state after an epoch
 
                 This function updates train/valid/test_perf_data. Call this function once
@@ -2463,6 +2464,12 @@ class EpochManager:
 
            test_dset (dc.data.Dataset): The test dataset
 
+           train_pred (np.ndarray, optional): Pre-computed train predictions aligned to
+               ``train_dset.ids``, used to compute train_perf without an inference-mode
+               ``model.predict`` pass. When supplied, the train subset skips
+               ``self._make_pred`` and uses ``train_pred`` directly; valid and test always
+               run the inference predict pass. Default None preserves the current behaviour.
+
         Returns:
            list: A list of performance values for the provided datasets.
 
@@ -2470,7 +2477,7 @@ class EpochManager:
            This function updates self._should_stop
 
         """
-        train_perf = self.update(ei, 'train', train_dset)
+        train_perf = self.update(ei, 'train', train_dset, train_pred=train_pred)
         valid_perf = self.update(ei, 'valid', valid_dset)
         test_perf = self.update(ei, 'test', test_dset)
 
@@ -2478,7 +2485,7 @@ class EpochManager:
 
     # ****************************************************************************************
     # class EpochManager
-    def accumulate(self, ei, subset, dset):
+    def accumulate(self, ei, subset, dset, train_pred=None):
         """Accumulate predictions
 
                 Makes predictions, accumulate predictions and calculate the performance metric. Calls PerfData.accumulate_preds
@@ -2491,10 +2498,18 @@ class EpochManager:
 
            dset (dc.data.Dataset): Calculates the performance for the given dset
 
+           train_pred (np.ndarray, optional): Pre-computed predictions for the train subset,
+               aligned to ``dset.ids``. Only consulted when ``subset == 'train'``; when supplied
+               the inference-mode ``self._make_pred`` pass is skipped and ``train_pred`` is
+               accumulated directly. valid and test always run ``self._make_pred`` regardless.
+
         Returns:
            float: Performance metric for the given dset.
         """
-        pred = self._make_pred(dset)
+        if subset == 'train' and train_pred is not None:
+            pred = train_pred
+        else:
+            pred = self._make_pred(dset)
         perf = getattr(self.wrapper, f'{subset}_perf_data')[ei].accumulate_preds(pred, dset.ids)
         return perf
 
@@ -2572,7 +2587,7 @@ class EpochManager:
 
     # ****************************************************************************************
     # class EpochManager
-    def update(self, ei, subset, dset=None):
+    def update(self, ei, subset, dset=None, train_pred=None):
         """Update training state
 
                 Updates the training state for a given subset and epoch index with the given dataset.
@@ -2584,6 +2599,10 @@ class EpochManager:
 
            dset (dc.data.Dataset): Updates using this dset
 
+           train_pred (np.ndarray, optional): Pre-computed train predictions aligned to
+               ``dset.ids``. Forwarded to ``accumulate`` only for the train subset; ignored for
+               valid and test, which always run the inference predict pass.
+
         Returns:
            perf (float): the performance of the given dset.
 
@@ -2591,7 +2610,7 @@ class EpochManager:
         if dset is None:
             return None
 
-        perf = self.accumulate(ei, subset, dset)
+        perf = self.accumulate(ei, subset, dset, train_pred=train_pred)
         self.compute(ei, subset)
 
         if subset == 'valid':

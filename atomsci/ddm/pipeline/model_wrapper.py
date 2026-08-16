@@ -48,6 +48,7 @@ from atomsci.ddm.utils import llnl_utils
 from atomsci.ddm.pipeline import model_datasets as md
 from atomsci.ddm.pipeline import transformations as trans
 from atomsci.ddm.pipeline import perf_data as perf
+from atomsci.ddm.pipeline._capture_model import make_capturing
 import atomsci.ddm.pipeline.parameter_parser as pp
 
 from tensorflow.python.keras.utils.layer_utils import count_params
@@ -2474,7 +2475,8 @@ class PytorchDeepChemModelWrapper(NNModelWrapper):
         # parameters can be overwritten by passing them explicitly
         extracted_features.update(kwargs)
 
-        chosen_model = pp.model_wl[self.params.model_type]
+        chosen_model = make_capturing(
+            pp.model_wl[self.params.model_type], self.params.reuse_fit_train_preds)
         self.log.info(f'Args passed to {chosen_model}:{str(extracted_features)}')
 
         # build the model
@@ -2702,7 +2704,9 @@ class MultitaskDCModelWrapper(PytorchDeepChemModelWrapper):
         if self.params.prediction_type == 'regression':
 
             # TODO: Need to check that MultitaskRegressor params are actually being used
-            model = MultitaskRegressor(
+            regressor_cls = make_capturing(
+                MultitaskRegressor, self.params.reuse_fit_train_preds)
+            model = regressor_cls(
                 self.params.num_model_tasks,
                 n_features,
                 layer_sizes=self.params.layer_sizes,
@@ -2723,7 +2727,9 @@ class MultitaskDCModelWrapper(PytorchDeepChemModelWrapper):
                 uncertainty=self.params.uncertainty)
         else:
             # TODO: Need to check that MultitaskClassifier params are actually being used
-            model = MultitaskClassifier(
+            classifier_cls = make_capturing(
+                MultitaskClassifier, self.params.reuse_fit_train_preds)
+            model = classifier_cls(
                 self.params.num_model_tasks,
                 n_features,
                 layer_sizes=self.params.layer_sizes,
@@ -2957,7 +2963,9 @@ class GraphConvDCModelWrapper(KerasDeepChemModelWrapper):
             else:
                 self.params.dropouts = [0.0] * len(self.params.layer_sizes)
 
-        model = dc.models.GraphConvModel(
+        graph_conv_model_cls = make_capturing(
+            dc.models.GraphConvModel, self.params.reuse_fit_train_preds)
+        model = graph_conv_model_cls(
             self.params.num_model_tasks,
             batch_size=self.params.batch_size,
             learning_rate=self.params.learning_rate,
